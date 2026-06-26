@@ -127,8 +127,10 @@ python3 georef_splat.py \
 ```
 
 The ICP runs in Python — no CloudCompare required — and prints the ground-to-DTM residual.
-Omit `--dtm` (and step 6) for a Sim3-only georeferencing without refinement. Any `.ply` can be
-inspected in a 3DGS viewer such as the browser-based [SuperSplat editor](https://superspl.at/editor).
+Omit `--dtm` (and step 6) for a Sim3-only georeferencing without refinement. The georeferenced
+output is in absolute UTM, which CloudCompare reads directly (global shift) but WebGL viewers
+cannot; re-run with `--recenter` to write the splat at a local origin (plus a `.offset.txt` to
+map back to UTM) so it renders in the browser-based [SuperSplat editor](https://superspl.at/editor).
 
 ## Capture configuration
 

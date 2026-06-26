@@ -21,9 +21,11 @@ like seg01 is the ideal first case; under dense canopy widen the ground filter
 (--ground-band), since the splat sees the canopy while the DTM is bare earth.
 
 Note: a 3DGS .ply stores positions as float32, which quantises absolute UTM northings
-(~4.2 M) to ~0.25 m. The ICP is computed in float64 and the reported residual is exact; the
+(~4.2 M) to ~0.5 m. The ICP is computed in float64 and the reported residual is exact; the
 stored file inherits the format's float32 floor (viewers / CloudCompare handle the
-magnitudes via a global shift on load).
+magnitudes via a global shift on load). Pass --recenter to also shift the output splat to a
+local origin (writing a .offset.txt sidecar): this both removes the float32 quantisation and
+lets it render in WebGL viewers like SuperSplat, which cannot draw absolute UTM magnitudes.
 
 Requires: numpy, rasterio, plyfile   (pip install numpy rasterio plyfile)
 
@@ -293,6 +295,9 @@ def main():
     ap.add_argument("--ground-band", type=float, default=1.5,
                     help="half-width (m) of the height-above-DTM band used to pick ground points")
     ap.add_argument("--icp-iters", type=int, default=60)
+    ap.add_argument("--recenter", action="store_true",
+                    help="shift the output to a local origin (+ .offset.txt) so it renders in "
+                         "WebGL viewers (SuperSplat) and avoids float32 quantisation")
     args = ap.parse_args()
 
     from plyfile import PlyData, PlyElement
@@ -337,9 +342,20 @@ def main():
     c_c, R_c, t_c = compose_sim3(c, R1, t1, R2, t2)
     apply_to_vertex(v, names, c_c, R_c, t_c, Nv)
 
+    if args.recenter:
+        pos = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
+        off = np.floor(pos.mean(0))
+        pos -= off
+        v["x"], v["y"], v["z"] = pos[:, 0], pos[:, 1], pos[:, 2]
+        epsg_t = read_epsg(args.transform)
+        with open(args.out + ".offset.txt", "w") as f:
+            f.write(f"# local splat: world{f' (EPSG:{epsg_t})' if epsg_t else ''} = local + offset\n")
+            f.write("offset " + " ".join(f"{x:.3f}" for x in off) + "\n")
+        print(f"  recentered by {off.tolist()} -> {args.out}.offset.txt")
+
     PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(args.out)
     print(f"Wrote {args.out}  ({Nv} Gaussians; scale {c_c:.5f}; "
-          f"{'Sim3 + ICP' if args.dtm else 'Sim3 only'}).")
+          f"{'Sim3 + ICP' if args.dtm else 'Sim3 only'}{'; recentered' if args.recenter else ''}).")
 
 
 if __name__ == "__main__":
