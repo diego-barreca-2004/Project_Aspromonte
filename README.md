@@ -17,9 +17,9 @@ fisheye calibration, GPS-telemetry ingestion, and GPS-based georeferencing.
 ## Pipeline
 
 ```
- GoPro video       frames + GPS        calibration             SfM               3D Gaussians          GPS alignment     georeferenced splat
+ GoPro video       frames + GPS         calibration              SfM               3D Gaussians           GPS alignment     georeferenced splat
  (HERO13 Wide) ──▶ ingest_gopro.py ──▶ calibrate_camera.py ──▶ run_colmap.py ──▶ 3DGS training     ──▶ geo_align.py  ──▶ georef_splat.py
-                                       (ChArUco, fisheye)      (COLMAP)          (graphdeco-inria)     (GPS → Sim3)      (Sim3 + ICP → UTM)
+                                        (ChArUco, fisheye)       (COLMAP)          (graphdeco-inria)      (GPS → Sim3)      (Sim3 + ICP → UTM)
 ```
 
 1. **Capture** — GoPro HERO13, 5.3K 8:7 Wide, fixed exposure (see *Capture configuration*).
@@ -55,7 +55,7 @@ installed/built separately as described below.
 **Reference environment** (what this was developed and tested on):
 
 - WSL2 (Ubuntu) on Windows 11
-- NVIDIA RTX 5070 (Blackwell, compute capability `sm_120`), 12 GB VRAM
+- NVIDIA RTX 5070Ti (Blackwell, compute capability `sm_120`), 12 GB VRAM
 - CUDA Toolkit 12.8, NVIDIA driver supporting CUDA ≥ 12.8
 - Python 3.12, PyTorch built for CUDA 12.8 (`cu128`)
 - [COLMAP](https://colmap.github.io) ≥ 3.7 (CUDA build optional — see notes)
@@ -73,7 +73,7 @@ pip install numpy opencv-python pyproj rasterio plyfile
 
 Each stage writes into a per-segment working directory (`seg01/` in the examples).
 
-**1 — Calibrate the camera** (once per lens/setting; uses a ChArUco capture clip):
+**1 — Calibrate the camera** (once per lens/setting; uses a ChArUco capture clip, can also be done after the second step):
 
 ```bash
 python3 calibrate_camera.py --video calib.mp4 --out ./calib_out
