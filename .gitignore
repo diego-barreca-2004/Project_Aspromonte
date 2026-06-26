@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Virtual environment ---
+venv/
+.venv/
+env/
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Third-party code: NOT vendored (cloned & built separately, see README) ---
+# Inria 3D Gaussian Splatting
+gaussian-splatting/
+
+# --- Per-segment working data (frames, COLMAP db/models, 3DGS output, gps.csv) ---
+seg*/
+
+# --- Raw / intermediate geodata (large; regenerate with the pipeline) ---
+dtm_tiles/
+calib_out/
+*.tif
+*.tiff
+
+# --- 3D Gaussian Splatting point clouds (large outputs) ---
+*.ply
+
+# --- Raw capture video (transient; GoPro .MP4/.LRV/.THM, 360, proxies) ---
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.lrv
+*.LRV
+*.thm
+*.THM
+*.360
+
+# --- Downloaded installer packages (e.g. cuda-keyring_*.deb and its copies) ---
+*.deb
+
+# --- Logs / scratch ---
+*.log
+tmp/
