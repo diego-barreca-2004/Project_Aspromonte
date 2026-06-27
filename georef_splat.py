@@ -26,6 +26,8 @@ stored file inherits the format's float32 floor (viewers / CloudCompare handle t
 magnitudes via a global shift on load). Pass --recenter to also shift the output splat to a
 local origin (writing a .offset.txt sidecar): this both removes the float32 quantisation and
 lets it render in WebGL viewers like SuperSplat, which cannot draw absolute UTM magnitudes.
+Pass --clip-dtm <m> to drop Gaussians whose centres sit more than <m> metres (vertically)
+from the DTM — a quick floater cull that keeps the splat intact (all attributes preserved).
 
 Requires: numpy, rasterio, plyfile   (pip install numpy rasterio plyfile)
 
@@ -294,6 +296,9 @@ def main():
     ap.add_argument("--dtm", default=None, help="bare-earth DTM GeoTIFF (same CRS); enables ICP")
     ap.add_argument("--ground-band", type=float, default=1.5,
                     help="half-width (m) of the height-above-DTM band used to pick ground points")
+    ap.add_argument("--clip-dtm", type=float, default=None,
+                    help="drop Gaussians whose centre is farther than this many metres "
+                         "(vertically) from the DTM surface — a floater cull (requires --dtm)")
     ap.add_argument("--icp-iters", type=int, default=60)
     ap.add_argument("--recenter", action="store_true",
                     help="shift the output to a local origin (+ .offset.txt) so it renders in "
@@ -307,8 +312,10 @@ def main():
     v = ply["vertex"].data
     names = v.dtype.names
     Nv = len(v)
-    X1 = c * (R1 @ np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64).T).T + t1
+    orig = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
+    X1 = c * (R1 @ orig.T).T + t1
 
+    Z = T = None
     R2, t2 = np.eye(3), np.zeros(3)
     if args.dtm:
         Z, nrm, T, crs = load_dtm(args.dtm)
@@ -340,6 +347,21 @@ def main():
                   f"(RMS {info['rms0']:.3f} -> {info['rms']:.3f} m)")
 
     c_c, R_c, t_c = compose_sim3(c, R1, t1, R2, t2)
+
+    if args.clip_dtm is not None:
+        if Z is None:
+            sys.exit("--clip-dtm requires --dtm.")
+        X2 = c_c * (R_c @ orig.T).T + t_c                  # final positions (post Sim3 + ICP)
+        ri, ci, ok = nearest_cell(T, Z, X2[:, 0], X2[:, 1])
+        res = np.full(Nv, np.inf)
+        res[ok] = X2[ok, 2] - Z[ri[ok], ci[ok]]
+        keep = ok & np.isfinite(res) & (np.abs(res) <= args.clip_dtm)
+        dropped = Nv - int(keep.sum())
+        v = v[keep]
+        Nv = len(v)
+        print(f"  clip-dtm: kept {Nv}, dropped {dropped} Gaussians "
+              f"farther than {args.clip_dtm:g} m from the DTM")
+
     apply_to_vertex(v, names, c_c, R_c, t_c, Nv)
 
     if args.recenter:
