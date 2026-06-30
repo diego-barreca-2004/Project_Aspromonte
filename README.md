@@ -41,11 +41,12 @@ fisheye calibration, GPS-telemetry ingestion, and GPS-based georeferencing.
 | File | Stage | Description |
 |------|-------|-------------|
 | `calibrate_camera.py` | Calibration | ChArUco fisheye calibration; outputs intrinsics + distortion as JSON. |
+| `GoPro_Calibration.pdf` | Calibration | Printable ChArUco board (9×6 squares, `DICT_4X4_50`) — matches `calibrate_camera.py`'s defaults. |
 | `ingest_gopro.py` | Ingestion | GoPro video → frames + per-frame `gps.csv` (HERO13 GPS9 telemetry). |
 | `run_colmap.py` | SfM | COLMAP wrapper (fisheye-aware, optional calibration injection, CPU by default). |
 | `geo_align.py` | Georeferencing | GPS → world similarity transform (robust Umeyama fit, UTM). |
 | `dtm_merge_reproject.py` | Georeferencing | Mosaic the open LiDAR DTM tiles and reproject them to UTM. |
-| `georef_splat.py` | Georeferencing | Apply the Sim3 to the 3DGS splat and optionally refine it onto the DTM by ICP — one self-contained step. |
+| `georef_splat.py` | Georeferencing | Apply the Sim3 to the 3DGS splat, optionally refine onto the DTM by ICP, and write both the absolute-UTM splat and a recentred `view.ply` for SuperSplat — one self-contained step. |
 
 Third-party components (COLMAP, the Inria 3DGS code) are **not** vendored here — they are
 installed/built separately as described below.
@@ -78,6 +79,10 @@ Each stage writes into a per-segment working directory (`seg01/` in the examples
 ```bash
 python3 calibrate_camera.py --video calib.mp4 --out ./calib_out
 ```
+
+Print `GoPro_Calibration.pdf` (a 9×6 ChArUco board, `DICT_4X4_50`) and film it while moving the
+camera through varied angles and distances; the script's `--cols 9 --rows 6` defaults match this
+board.
 
 **2 — Extract frames and GPS** from a survey clip:
 
@@ -116,7 +121,8 @@ under *Georeferencing & elevation data*):
 python3 dtm_merge_reproject.py --in ./dtm_tiles --out aspromonte_dtm_utm33n.tif
 ```
 
-**7 — Georeference the splat** (apply the Sim3 and refine onto the DTM by ICP, in one step):
+**7 — Georeference the splat** (apply the Sim3, refine onto the DTM by ICP, and write both
+outputs in one run):
 
 ```bash
 python3 georef_splat.py \
@@ -127,10 +133,19 @@ python3 georef_splat.py \
 ```
 
 The ICP runs in Python — no CloudCompare required — and prints the ground-to-DTM residual.
-Omit `--dtm` (and step 6) for a Sim3-only georeferencing without refinement. The georeferenced
-output is in absolute UTM, which CloudCompare reads directly (global shift) but WebGL viewers
-cannot; re-run with `--recenter` to write the splat at a local origin (plus a `.offset.txt` to
-map back to UTM) so it renders in the browser-based [SuperSplat editor](https://superspl.at/editor).
+Omit `--dtm` (and step 6) for a Sim3-only georeferencing without refinement.
+
+A single run writes **two outputs**:
+
+- **`--out`** — the splat in **absolute UTM**, the canonical deliverable (GIS / CloudCompare,
+  which absorbs the large coordinates with a global shift on load).
+- **`view.ply`** (written beside `--out`, with a `view.ply.offset.txt` sidecar mapping local →
+  UTM) — the same splat recentred on a local origin, for WebGL viewers like the browser-based
+  [SuperSplat editor](https://superspl.at/editor), which cannot draw absolute UTM magnitudes.
+  Change its path with `--view-out`, or skip it entirely with `--no-view`. The data are Z-up and
+  the file is **not** re-oriented, so in SuperSplat set **Rotation X = 90** on import to view it
+  level. Add `--clip-dtm <m>` to drop floaters farther than `<m>` metres (vertically) from the
+  DTM **from the view only** — the UTM deliverable stays intact (requires `--dtm`).
 
 ## Capture configuration
 
@@ -185,7 +200,8 @@ A few hard-won, hardware-specific findings, documented for reproducibility:
 `geo_align.py` gives the reconstruction correct **scale** and metre-level georeferencing
 from the GoPro GPS track. Consumer GPS limits absolute accuracy to a few metres; for
 sub-metre registration, reproject an open LiDAR Digital Terrain Model (DTM) to the same CRS
-and refine with ICP (e.g. CloudCompare) on the ground portions of the model.
+and refine with ICP on the ground portions of the model — `georef_splat.py` does this in Python
+(step 7), so CloudCompare is not required.
 
 Open elevation data for the area:
 
