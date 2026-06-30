@@ -7,7 +7,7 @@ Single, self-contained Binary 1. Takes a trained 3D Gaussian Splatting point_clo
      run entirely in Python,
   3. composes the two into ONE transform and applies it a single time to every Gaussian
      attribute (positions, rotation quaternions, log-scales, spherical harmonics),
-  4. writes the georeferenced (refined) splat and reports the residual to the DTM.
+  4. writes TWO outputs in one run and reports the residual to the DTM.
 
 No CloudCompare, no global-shift bookkeeping: the ICP runs in a locally-centred float64
 frame, so the ~4.2 M UTM magnitudes never wreck the conditioning. The per-attribute splat
@@ -20,29 +20,44 @@ cloud-to-DTM ICP) - the surface residual it prints is the figure that matters. O
 like seg01 is the ideal first case; under dense canopy widen the ground filter
 (--ground-band), since the splat sees the canopy while the DTM is bare earth.
 
-Note: a 3DGS .ply stores positions as float32, which quantises absolute UTM northings
-(~4.2 M) to ~0.5 m. The ICP is computed in float64 and the reported residual is exact; the
-stored file inherits the format's float32 floor (viewers / CloudCompare handle the
-magnitudes via a global shift on load). Pass --recenter to also shift the output splat to a
-local origin (writing a .offset.txt sidecar): this both removes the float32 quantisation and
-lets it render in WebGL viewers like SuperSplat, which cannot draw absolute UTM magnitudes.
-Pass --clip-dtm <m> to drop Gaussians whose centres sit more than <m> metres (vertically)
-from the DTM — a quick floater cull that keeps the splat intact (all attributes preserved).
+Two outputs, written from one run (the heavy per-attribute transform is computed once):
+
+  (A) --out          absolute UTM, Z-up. The canonical deliverable (GIS / CloudCompare /
+                     M3C2). A 3DGS .ply stores positions as float32, which quantises
+                     absolute UTM northings (~4.2 M) to a few decimetres; the ICP is
+                     computed in float64 and the reported residual is exact, while the
+                     stored file inherits the format's float32 floor (CloudCompare and
+                     other viewers absorb the magnitude with a global shift on load).
+
+  (B) view.ply       the same splat recentred on a local origin (with a .offset.txt sidecar
+                     mapping local -> UTM), for WebGL viewers like the SuperSplat editor,
+                     which cannot draw absolute UTM magnitudes. Its positions are derived
+                     from the float64 UTM coordinates and only THEN shifted, so the local
+                     splat keeps full precision (it never round-trips through float32 UTM).
+                     This file is recentred only - it is NOT re-oriented. The data are Z-up;
+                     SuperSplat is Y-up and imports with Rotation (0,0,180) by default, so
+                     set Rotation X = 90 manually there to view the splat level. Skip B with
+                     --no-view.
+
+Pass --clip-dtm <m> to drop, FROM THE VIEW ONLY, Gaussians whose centres sit more than <m>
+metres (vertically) from the DTM - a quick floater cull for a clean preview that leaves the
+canonical UTM deliverable (A) fully intact (requires --dtm).
 
 Requires: numpy, rasterio, plyfile   (pip install numpy rasterio plyfile)
 
 Usage:
-  # Sim3 + ICP refinement (recommended)
+  # Sim3 + ICP refinement (recommended): writes the UTM splat AND view.ply beside it
   python3 georef_splat.py \
       --ply ./seg01/gs_output/point_cloud/iteration_30000/point_cloud.ply \
       --transform ./seg01/colmap/geo_transform.txt \
       --dtm aspromonte_dtm_utm33n.tif \
       --out ./seg01/gs_output/point_cloud_utm_icp.ply
 
-  # Sim3 only (no DTM): just georeference the splat, no refinement
+  # Sim3 only (no DTM): just georeference, no refinement
   python3 georef_splat.py --ply ... --transform ... --out point_cloud_utm.ply
 """
 import argparse
+import os
 import sys
 import numpy as np
 
@@ -114,29 +129,29 @@ def quat_mul(q1, q2):
 
 # --- transform file I/O ------------------------------------------------------
 def read_transform(path):
-    """Parse geo_transform.txt -> (scale c, rotation R (3,3), translation t (3,))."""
+    """Parse geo_transform.txt -> (scale c, rotation R (3,3), translation t (3,), epsg|None)."""
     c = R = t = None
-    for line in open(path):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, *vals = line.split()
-        if key == "scale": c = float(vals[0])
-        elif key == "R":   R = np.array(list(map(float, vals))).reshape(3, 3)
-        elif key == "t":   t = np.array(list(map(float, vals)))
+    epsg = None
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, *vals = line.split()
+            if key == "scale":
+                c = float(vals[0])
+            elif key == "R":
+                R = np.array(list(map(float, vals))).reshape(3, 3)
+            elif key == "t":
+                t = np.array(list(map(float, vals)))
+            elif key == "epsg":
+                try:
+                    epsg = int(vals[0])
+                except (IndexError, ValueError):
+                    epsg = None
     if c is None or R is None or t is None:
         sys.exit("transform file must contain 'scale', 'R' (9 values) and 't' (3 values).")
-    return c, R, t
-
-
-def read_epsg(path):
-    for line in open(path):
-        if line.strip().startswith("epsg"):
-            try:
-                return int(line.split()[1])
-            except (IndexError, ValueError):
-                return None
-    return None
+    return c, R, t, epsg
 
 
 # --- SO(3) helpers -----------------------------------------------------------
@@ -249,13 +264,13 @@ def dtm_correspondence(Z, nrm, T):
     return correspond
 
 
-# --- per-attribute splat transform -------------------------------------------
-def apply_to_vertex(v, names, c, R, t, N):
-    """Apply Sim3 (c,R,t) to every Gaussian attribute of a 3DGS vertex array, in place."""
-    xyz = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
-    xyz = c * (R @ xyz.T).T + t
-    v["x"], v["y"], v["z"] = xyz[:, 0], xyz[:, 1], xyz[:, 2]
-
+# --- per-attribute splat transform (orientation / scale / colour) ------------
+def transform_appearance(v, names, c, R, N):
+    """Apply rotation R and uniform scale c to the orientation-, scale- and colour-
+    dependent Gaussian attributes IN PLACE: rotation quaternions, log-scales and
+    spherical harmonics. Positions are handled by the caller - a pure translation does
+    not affect any of these, so this runs ONCE and is shared by both outputs. N == len(v).
+    """
     # rotation quaternions:  q' = quat(R) (x) normalize(q)
     if all(k in names for k in ("rot_0", "rot_1", "rot_2", "rot_3")):
         q = np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], 1).astype(np.float64)
@@ -288,38 +303,47 @@ def apply_to_vertex(v, names, c, R, t, N):
             v[n] = flat[:, i]
 
 
+def write_ply(v, path):
+    from plyfile import PlyData, PlyElement
+    PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(path)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Apply Sim3 (+ optional ICP-to-DTM) to a 3DGS .ply.")
+    ap = argparse.ArgumentParser(description="Apply Sim3 (+ optional ICP-to-DTM) to a 3DGS .ply; "
+                                             "write absolute UTM and a recentred view.ply.")
     ap.add_argument("--ply", required=True, help="input 3DGS point_cloud.ply")
     ap.add_argument("--transform", required=True, help="geo_transform.txt from geo_align.py")
-    ap.add_argument("--out", required=True, help="output georeferenced .ply")
+    ap.add_argument("--out", required=True, help="(A) output georeferenced .ply, absolute UTM")
+    ap.add_argument("--view-out", default=None,
+                    help="(B) recentred splat for WebGL viewers (default: view.ply beside --out)")
+    ap.add_argument("--no-view", action="store_true",
+                    help="write only the absolute-UTM output (A); skip the recentred view.ply")
     ap.add_argument("--dtm", default=None, help="bare-earth DTM GeoTIFF (same CRS); enables ICP")
     ap.add_argument("--ground-band", type=float, default=1.5,
                     help="half-width (m) of the height-above-DTM band used to pick ground points")
     ap.add_argument("--clip-dtm", type=float, default=None,
-                    help="drop Gaussians whose centre is farther than this many metres "
-                         "(vertically) from the DTM surface — a floater cull (requires --dtm)")
+                    help="drop Gaussians farther than this many metres (vertically) from the DTM "
+                         "FROM THE VIEW ONLY - a floater cull that leaves --out intact (needs --dtm)")
     ap.add_argument("--icp-iters", type=int, default=60)
-    ap.add_argument("--recenter", action="store_true",
-                    help="shift the output to a local origin (+ .offset.txt) so it renders in "
-                         "WebGL viewers (SuperSplat) and avoids float32 quantisation")
     args = ap.parse_args()
 
-    from plyfile import PlyData, PlyElement
+    if args.clip_dtm is not None and args.dtm is None:
+        sys.exit("--clip-dtm requires --dtm.")
 
-    c, R1, t1 = read_transform(args.transform)
+    from plyfile import PlyData
+
+    c, R1, t1, epsg_t = read_transform(args.transform)
     ply = PlyData.read(args.ply)
     v = ply["vertex"].data
     names = v.dtype.names
     Nv = len(v)
     orig = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
-    X1 = c * (R1 @ orig.T).T + t1
+    X1 = c * (R1 @ orig.T).T + t1                          # Sim3 only (for ground pick + ICP)
 
     Z = T = None
     R2, t2 = np.eye(3), np.zeros(3)
     if args.dtm:
         Z, nrm, T, crs = load_dtm(args.dtm)
-        epsg_t = read_epsg(args.transform)
         if crs is not None and epsg_t is not None and crs.to_epsg() not in (None, epsg_t):
             print(f"  WARNING: DTM CRS EPSG:{crs.to_epsg()} != transform EPSG:{epsg_t}. "
                   "Reproject the DTM (dtm_merge_reproject.py) to match.")
@@ -346,38 +370,44 @@ def main():
             print(f"  ground-to-DTM residual: median {info['median_abs']:.3f} m  "
                   f"(RMS {info['rms0']:.3f} -> {info['rms']:.3f} m)")
 
+    # one composed transform; final UTM positions in float64, computed once
     c_c, R_c, t_c = compose_sim3(c, R1, t1, R2, t2)
+    Xf = c_c * (R_c @ orig.T).T + t_c                      # (Nv,3) float64, absolute UTM
+    transform_appearance(v, names, c_c, R_c, Nv)           # rotate orientation/scale/SH once
 
+    # (A) absolute UTM -> --out  (positions stored at the .ply float32 floor)
+    v["x"], v["y"], v["z"] = Xf[:, 0], Xf[:, 1], Xf[:, 2]
+    write_ply(v, args.out)
+    print(f"(A) wrote {args.out}  ({Nv} Gaussians; scale {c_c:.5f}; "
+          f"{'Sim3 + ICP' if args.dtm else 'Sim3 only'}; absolute UTM).")
+
+    if args.no_view:
+        return
+
+    # (B) recentred view.ply  (positions taken from float64 UTM, then shifted -> no float32 round-trip)
+    view_out = args.view_out or os.path.join(os.path.dirname(args.out) or ".", "view.ply")
+
+    keep = np.ones(Nv, bool)
     if args.clip_dtm is not None:
-        if Z is None:
-            sys.exit("--clip-dtm requires --dtm.")
-        X2 = c_c * (R_c @ orig.T).T + t_c                  # final positions (post Sim3 + ICP)
-        ri, ci, ok = nearest_cell(T, Z, X2[:, 0], X2[:, 1])
+        ri, ci, ok = nearest_cell(T, Z, Xf[:, 0], Xf[:, 1])
         res = np.full(Nv, np.inf)
-        res[ok] = X2[ok, 2] - Z[ri[ok], ci[ok]]
+        res[ok] = Xf[ok, 2] - Z[ri[ok], ci[ok]]
         keep = ok & np.isfinite(res) & (np.abs(res) <= args.clip_dtm)
-        dropped = Nv - int(keep.sum())
-        v = v[keep]
-        Nv = len(v)
-        print(f"  clip-dtm: kept {Nv}, dropped {dropped} Gaussians "
-              f"farther than {args.clip_dtm:g} m from the DTM")
+        print(f"  view clip-dtm: keeping {int(keep.sum())}, dropping {Nv - int(keep.sum())} "
+              f"Gaussians farther than {args.clip_dtm:g} m from the DTM (view only; --out intact)")
 
-    apply_to_vertex(v, names, c_c, R_c, t_c, Nv)
-
-    if args.recenter:
-        pos = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
-        off = np.floor(pos.mean(0))
-        pos -= off
-        v["x"], v["y"], v["z"] = pos[:, 0], pos[:, 1], pos[:, 2]
-        epsg_t = read_epsg(args.transform)
-        with open(args.out + ".offset.txt", "w") as f:
-            f.write(f"# local splat: world{f' (EPSG:{epsg_t})' if epsg_t else ''} = local + offset\n")
-            f.write("offset " + " ".join(f"{x:.3f}" for x in off) + "\n")
-        print(f"  recentered by {off.tolist()} -> {args.out}.offset.txt")
-
-    PlyData([PlyElement.describe(v, "vertex")], text=False, byte_order="<").write(args.out)
-    print(f"Wrote {args.out}  ({Nv} Gaussians; scale {c_c:.5f}; "
-          f"{'Sim3 + ICP' if args.dtm else 'Sim3 only'}{'; recentered' if args.recenter else ''}).")
+    vb = v[keep].copy()
+    Xb = Xf[keep]
+    off = np.floor(Xb.mean(0))
+    Xb = Xb - off
+    vb["x"], vb["y"], vb["z"] = Xb[:, 0], Xb[:, 1], Xb[:, 2]
+    write_ply(vb, view_out)
+    with open(view_out + ".offset.txt", "w") as f:
+        f.write(f"# local splat: world{f' (EPSG:{epsg_t})' if epsg_t else ''} = local + offset\n")
+        f.write("offset " + " ".join(f"{x:.3f}" for x in off) + "\n")
+    print(f"(B) wrote {view_out}  ({len(vb)} Gaussians; recentred by {off.tolist()}; "
+          f"-> {view_out}.offset.txt)")
+    print("    SuperSplat is Y-up: set Rotation X = 90 on import to view it level.")
 
 
 if __name__ == "__main__":
