@@ -11,8 +11,21 @@ open-source stack — [COLMAP](https://colmap.github.io) for Structure-from-Moti
 implementation for radiance-field reconstruction — and adds custom tooling for GoPro
 fisheye calibration, GPS-telemetry ingestion, and GPS-based georeferencing.
 
-> Status: research / thesis work in progress. The pipeline runs end-to-end on a single
-> segment; scaling to a full trail network is discussed under *Limitations & future work*.
+The project has **two tracks** that share the same capture, calibration, SfM and
+georeferencing front-end:
+
+- **Track 1 — navigable splat** (the pipeline described here): the georeferenced 3DGS
+  reconstruction, for visualization and inspection. **Complete.**
+- **Track 2 — georeferenced change detection**: dense MVS point clouds of the same site
+  at two epochs, co-registered in the same UTM frame and differenced with **M3C2** to
+  detect structural change (fallen trees, erosion, washout, landslide) and separate it
+  from benign change (season, foliage, lighting). See *Track 2 — georeferenced change
+  detection* below.
+
+> Status: research / thesis work in progress. Track 1 runs end-to-end; Track 2's
+> single-epoch dense pipeline (SfM → CUDA dense MVS → floater-cleaned UTM cloud) is
+> working, and two-epoch change detection is in progress. Scaling to a full trail network
+> is discussed under *Limitations & future work*.
 
 ## Pipeline
 
@@ -47,6 +60,8 @@ fisheye calibration, GPS-telemetry ingestion, and GPS-based georeferencing.
 | `geo_align.py` | Georeferencing | GPS → world similarity transform (robust Umeyama fit, UTM). |
 | `dtm_merge_reproject.py` | Georeferencing | Mosaic the open LiDAR DTM tiles and reproject them to UTM. |
 | `georef_splat.py` | Georeferencing | Apply the Sim3 to the 3DGS splat, optionally refine onto the DTM by ICP, and write both the absolute-UTM splat and a recentred `view.ply` for SuperSplat — one self-contained step. |
+| `georef_cloud.py` | Change detection | Apply the Sim3 to a dense MVS cloud with statistical-outlier floater removal, writing a **float64** absolute-UTM cloud for M3C2 (Track 2). |
+| `BUILD_COLMAP_CUDA.md` | Build guide | Build COLMAP with CUDA for Blackwell (`sm_120`, arch-89 workaround) and run the dense MVS — required for Track 2. |
 
 Third-party components (COLMAP, the Inria 3DGS code) are **not** vendored here — they are
 installed/built separately as described below.
@@ -59,15 +74,16 @@ installed/built separately as described below.
 - NVIDIA RTX 5070Ti (Blackwell, compute capability `sm_120`), 12 GB VRAM
 - CUDA Toolkit 12.8, NVIDIA driver supporting CUDA ≥ 12.8
 - Python 3.12, PyTorch built for CUDA 12.8 (`cu128`)
-- [COLMAP](https://colmap.github.io) ≥ 3.7 (CUDA build optional — see notes)
+- [COLMAP](https://colmap.github.io) ≥ 3.7 — CUDA build **required for Track 2** dense MVS
+  (Blackwell needs an arch-89 build; see `BUILD_COLMAP_CUDA.md`), optional for Track 1
 
-**Python packages:** `numpy`, `opencv-python`, `pyproj`, `rasterio`, `plyfile` (the last three
-for the georeferencing scripts). `ExifTool`
-≥ 13.0 is required by `ingest_gopro.py` to read the GPS9 telemetry stream.
+**Python packages:** `numpy`, `scipy`, `opencv-python`, `pyproj`, `rasterio`, `plyfile`
+(the last four for the georeferencing scripts; `scipy` is used by `georef_cloud.py`).
+`ExifTool` ≥ 13.0 is required by `ingest_gopro.py` to read the GPS9 telemetry stream.
 
 ```bash
 python3 -m venv venv && source venv/bin/activate
-pip install numpy opencv-python pyproj rasterio plyfile
+pip install numpy scipy opencv-python pyproj rasterio plyfile
 ```
 
 ## Quick start
@@ -147,6 +163,70 @@ A single run writes **two outputs**:
   level. Add `--clip-dtm <m>` to drop floaters farther than `<m>` metres (vertically) from the
   DTM **from the view only** — the UTM deliverable stays intact (requires `--dtm`).
 
+## Track 2 — georeferenced change detection
+
+Track 2 reuses the same front-end (capture, calibration, SfM, DTM, and the Sim3 in
+`geo_transform.txt`) but replaces 3DGS with **dense MVS**, and compares two epochs. The
+Sim3 applies 1:1 to the dense cloud because `image_undistorter` does not move the 3D
+coordinate frame.
+
+### Dense reconstruction (CUDA COLMAP)
+
+Dense MVS (`patch_match_stereo`) is CUDA-only. On Blackwell GPUs, COLMAP must be built
+with `-DCMAKE_CUDA_ARCHITECTURES=89` (**not** 120) — arch 120 miscompiles the PatchMatch
+kernels and silently yields empty depth maps (0 fused points). The full build (with the
+GCC-13 source patches) and the exact `image_undistorter` → `patch_match_stereo` →
+`stereo_fusion` commands are in [`BUILD_COLMAP_CUDA.md`](BUILD_COLMAP_CUDA.md).
+
+### Reconstruction contract (identical for both epochs)
+
+For M3C2 to measure *terrain* change rather than pipeline differences, epoch 1 and
+epoch 2 must be reconstructed with identical parameters ("like-with-like"):
+
+| Stage | Parameter | Value |
+|-------|-----------|-------|
+| `patch_match_stereo` | `max_image_size` | `1000` |
+| `patch_match_stereo` | `geom_consistency` | `true` |
+| `patch_match_stereo` | `filter` | `true` |
+| `stereo_fusion` | `input_type` | `geometric` (default thresholds) |
+| `georef_cloud.py` (SOR) | `iters / k / std` | `2 / 20 / 2.0` |
+
+### Georeference the dense cloud
+
+`georef_cloud.py` removes MVS floaters (iterative SOR), applies the Sim3, and writes the
+cloud in **float64** absolute UTM — float32 would quantise the ~4.2 × 10⁶ UTM coordinates
+to ~0.25 m and defeat sub-metre change detection:
+
+```bash
+python3 georef_cloud.py \
+        ./seg01/colmap/dense/fused.ply \
+        ./seg01/colmap/geo_transform.txt \
+        ./seg01/colmap/dense/fused_utm.ply
+```
+
+Open `fused_utm.ply` in CloudCompare (accept the global shift on load — display-only, the
+file stays absolute). Reference run on `seg01`: 4,533,733 → 4,460,797 points after SOR
+(the floaters were ~1.6 % of points but held ~98 % of the bounding box); UTM extent
+≈ 192 × 127 × 49 m; centroid E ≈ 558995, N ≈ 4214492.
+
+### Change-detection workflow (in progress)
+
+1. Reconstruct a second epoch (same site, a controlled change) through the identical
+   pipeline to `fused_utm2.ply`.
+2. Both clouds are already coarsely aligned in UTM; a fine ICP between them removes the
+   residual, then **M3C2** yields the change map.
+3. Distinguish structural change from benign change — the original contribution.
+
+**Level of detection.** Before introducing a change, run an *epoch-zero-zero*
+repeatability test (two clouds of the unchanged scene) and measure the M3C2 standard
+deviation on stable ground — that is the detection floor. A controlled-change object must
+sit ~3–5× above it: larger than the point spacing and taller than the noise. A rigid
+object of known size (a 20–40 cm box) gives quantified accuracy; moved soil/rock gives a
+positive + negative signature closest to the real washout/erosion use case. Thin, dark or
+glossy objects (twigs, leaves) reconstruct poorly and fall under the floor — avoid them.
+Acquire both epochs with matching path, camera, time of day and weather to minimise the
+lighting confound at capture.
+
 ## Capture configuration
 
 Settings chosen for dense-forest dynamic range and to minimise rolling-shutter / motion
@@ -192,6 +272,11 @@ A few hard-won, hardware-specific findings, documented for reproducibility:
 - **COLMAP SIFT runs on CPU here.** COLMAP's GPU SIFT (SiftGPU) is slow/unreliable on
   recent GPUs and under WSL; CPU feature extraction and matching are faster and more
   correct. `run_colmap.py` defaults to CPU (override with `--use-gpu 1`).
+- **COLMAP dense MVS on Blackwell (sm_120):** `patch_match_stereo` is CUDA-only and, when
+  built for arch 120, silently produces noise depth maps / 0 fused points on RTX 50xx (a
+  known codegen bug). Build COLMAP with `-DCMAKE_CUDA_ARCHITECTURES=89` so the kernels run
+  via PTX-JIT to `sm_120`, and add `#include <memory>` to `src/colmap/image/line.cc` and
+  `src/colmap/mvs/workspace.h` for GCC 13. Full guide: `BUILD_COLMAP_CUDA.md`.
 - **VRAM:** on 12 GB, train with `--data_device cpu` so source images stay in system RAM;
   drop to `-r 2` if you still hit out-of-memory during densification.
 
