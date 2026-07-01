@@ -16,6 +16,8 @@ env/
 Thumbs.db
 
 # --- Third-party code: NOT vendored (cloned & built separately, see README) ---
+# COLMAP
+colmap/
 # Inria 3D Gaussian Splatting
 gaussian-splatting/
 
