@@ -311,6 +311,17 @@ with `dtm_merge_reproject.py`.
   reconstructing terrain from scratch, selective high-fidelity capture, and faster global
   SfM ([GLOMAP](https://github.com/colmap/glomap)) — evaluated empirically against
   incremental COLMAP, which is more robust on repetitive forest texture.
+- **Aerial river-corridor application.** The same two-epoch M3C2 engine applies to drone
+  surveys of river banks and embankments (erosion, slips, fallen trees, debris). Three
+  technical requirements distinguish it from the walked-trail case: the **water surface
+  must be masked out** before differencing (moving, reflective and textureless, it yields
+  unstable false surfaces that M3C2 would read as change — the method is strongest on
+  banks, embankments and exposed bed); **cross-epoch co-registration needs ground control
+  points** or fixed structures as a common anchor, since consumer GPS and ICP are
+  insufficient on low-rigid-structure scenes; and long corridor captures (thousands of
+  frames over kilometres) are the regime where **global SfM (GLOMAP)** genuinely pays off.
+  Water-level and riparian-vegetation variation between epochs is a harder version of the
+  trail's benign-change confounder.
 
 ## License
 
@@ -319,6 +330,12 @@ The code in this repository is released under the **MIT License** (see [`LICENSE
 This pipeline depends on third-party software distributed under its own terms — notably the
 Inria 3D Gaussian Splatting code (non-commercial research license), COLMAP (BSD), and GLOMAP
 (BSD-3). Those licenses govern their respective components.
+
+The Inria non-commercial license applies to **Track 1 only** (splat training/rendering);
+the **Track 2 change-detection chain** — COLMAP SfM + dense MVS plus the scripts in this
+repository — does not depend on the Inria code and is covered entirely by permissive
+licenses (BSD / MIT). Permissively licensed splat renderers also exist (e.g. `gsplat`,
+Apache-2.0).
 
 ## Acknowledgements
 
