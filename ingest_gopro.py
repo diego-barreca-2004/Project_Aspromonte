@@ -3,7 +3,7 @@
 
 Extracts evenly-spaced frames from a GoPro video (optional sub-clip and downscale) and the
 GPS track, writing:
-  out/frames/frame_000001_t00012.50.jpg ...
+  out/frames/frame_000000_t00012.50.jpg ...
   out/gps.csv         columns: t_s, ts, lat, lon, alt, speed, dop, fix
   out/summary.json
 
@@ -31,7 +31,7 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 
 import cv2
 
@@ -58,10 +58,17 @@ def extract_frames(path, out_dir, every_sec, start, end, longest_side, jpeg_qual
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         sys.exit(f"Could not open video: {path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    if fps <= 0:
+        sys.exit("Could not read the video FPS: frame timestamps (and their GPS alignment) "
+                 "would be silently wrong. Re-mux with ffmpeg and retry.")
     step = max(1, int(round(fps * every_sec)))
     frames_dir = os.path.join(out_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
+    leftovers = sum(1 for f in os.listdir(frames_dir) if f.lower().endswith(".jpg"))
+    if leftovers:
+        print(f"  WARNING: {leftovers} .jpg already in {frames_dir} - frames from an older "
+              f"run/params mixed with new ones poison SfM; delete them first if unintended.")
 
     idx, saved, times = 0, 0, []
     while True:
@@ -126,7 +133,7 @@ def _parse_epoch(ts):
                 "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
                 "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
         try:
-            return datetime.strptime(s, fmt).timestamp()
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc).timestamp()
         except ValueError:
             continue
     return None
@@ -211,10 +218,14 @@ def _gps_rows_from_json(path):
     samples = []
     for dev in (data.values() if isinstance(data, dict) else []):
         streams = dev.get("streams", {}) if isinstance(dev, dict) else {}
-        for sname, stream in streams.items():
-            if sname.upper().startswith("GPS"):
-                samples = stream.get("samples", [])
+        gps = {s.upper(): st for s, st in streams.items()
+               if s.upper().startswith("GPS") and isinstance(st, dict)}
+        for pref in ("GPS9", "GPS5"):        # prefer GPS9 (carries dop+fix) when both exist
+            if pref in gps:
+                samples = gps[pref].get("samples", [])
                 break
+        if not samples and gps:              # any other GPS* stream name
+            samples = next(iter(gps.values())).get("samples", [])
         if samples:
             break
 
@@ -368,6 +379,9 @@ def main():
                     help="Drop GPS samples with fix < this (0=keep all; GPS9: 2=2D, 3=3D).")
     ap.add_argument("--probe", action="store_true", help="Only inspect the video, do not extract.")
     args = ap.parse_args()
+
+    if args.every_sec <= 0:
+        sys.exit("--every-sec must be > 0")
 
     if not os.path.isfile(args.video):
         sys.exit(f"No such file: {args.video}")

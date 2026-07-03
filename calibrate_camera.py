@@ -17,6 +17,10 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
+if not hasattr(cv2, "aruco"):
+    sys.exit("This OpenCV build lacks the aruco module "
+             "(install opencv-contrib-python, or OpenCV >= 4.7).")
+
 MODELS = ("standard", "rational", "fisheye")
 ARUCO_DICT = cv2.aruco.DICT_4X4_50                     # matches a DICT_4X4 board
 MIN_CORNERS = 6                                        # min ChArUco corners per usable view
@@ -80,7 +84,9 @@ def collect_from_video(video_path: str, frame_step: int, board, dictionary, dete
         if count % frame_step == 0:
             ok, frame = cap.retrieve()           # decode only the sampled frames
             if not ok:
-                break
+                print(f"  skip: frame_{count} (decode failed)")
+                count += 1                       # keep frame numbering aligned
+                continue
             name = f"frame_{count}"
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             if image_size is None:

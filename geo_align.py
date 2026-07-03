@@ -47,13 +47,23 @@ def frame_time(name):
 def load_gps(path):
     import numpy as np
     t, lat, lon, alt = [], [], [], []
+    n_alt_default = 0
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
-            try:
-                t.append(float(row["t_s"])); lat.append(float(row["lat"]))
-                lon.append(float(row["lon"])); alt.append(float(row.get("alt") or 0.0))
+            try:                                   # parse the whole row BEFORE appending:
+                vt = float(row["t_s"])             # partial appends desync the arrays and
+                vla = float(row["lat"])            # crash later with a cryptic IndexError.
+                vlo = float(row["lon"])
+                a = row.get("alt")
+                alt_missing = a in (None, "")
+                va = 0.0 if alt_missing else float(a)
             except (KeyError, ValueError):
                 continue
+            t.append(vt); lat.append(vla); lon.append(vlo); alt.append(va)
+            n_alt_default += alt_missing
+    if n_alt_default:
+        print(f"  WARNING: {n_alt_default} GPS rows had no altitude (defaulted to 0.0) - "
+              f"zeros amid real elevations distort the vertical fit; check gps.csv.")
     if not t:
         sys.exit("No usable rows in gps.csv (need columns t_s,lat,lon,alt).")
     o = np.argsort(t)
@@ -85,6 +95,8 @@ def read_camera_centres(model_dir):
             f.read(4)                                  # camera_id
             name = b""
             while (ch := f.read(1)) != b"\x00":
+                if not ch:
+                    sys.exit(f"Truncated images.bin in {model_dir} (EOF inside an image name).")
                 name += ch
             npts = struct.unpack("<Q", f.read(8))[0]
             f.read(npts * 24)                          # skip 2D point records

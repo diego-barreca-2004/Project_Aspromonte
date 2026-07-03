@@ -81,7 +81,11 @@ def camera_params_from_calibration(calib_path, image_dir):
     """Build (colmap_model, params_csv) from a calibration JSON, scaled to the frame resolution."""
     with open(calib_path) as fh:
         c = json.load(fh)
-    model = CALIB_MODEL_MAP.get(c.get("model"), "OPENCV_FISHEYE")
+    model = CALIB_MODEL_MAP.get(c.get("model"))
+    if model is None:
+        sys.exit(f"Unknown calibration model '{c.get('model')}' in {calib_path} "
+                 f"(expected one of {sorted(CALIB_MODEL_MAP)}); refusing to inject "
+                 f"mismatched intrinsics.")
     K, dist = c["camera_matrix"], list(c["distortion_coefficients"])
     fx, fy, cx, cy = K[0][0], K[1][1], K[0][2], K[1][2]
     w_cal, h_cal = c["image_size"]
@@ -204,9 +208,11 @@ def main():
          "--output_path", undist, "--output_type", "COLMAP"])
 
     # Normalise to <undist>/sparse/0/ (what Inria 3DGS train.py expects).
+    # Always move fresh flat bins into 0/, overwriting: guarding on "0 missing"
+    # left a STALE model in 0/ on re-runs in the same out dir.
     u_sparse = os.path.join(undist, "sparse")
     u_sparse0 = os.path.join(u_sparse, "0")
-    if os.path.isdir(u_sparse) and not os.path.isdir(u_sparse0):
+    if os.path.isdir(u_sparse):
         os.makedirs(u_sparse0, exist_ok=True)
         for f in ("cameras.bin", "images.bin", "points3D.bin"):
             p = os.path.join(u_sparse, f)
