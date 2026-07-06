@@ -79,6 +79,9 @@ def main():
     ap.add_argument("--sor-k", type=int, default=20, help="neighbours per point")
     ap.add_argument("--sor-std", type=float, default=2.0, help="std-dev multiplier")
     args = ap.parse_args()
+    if args.sor_k < 1:
+        ap.error("--sor-k must be >= 1 (k=0 makes the neighbour statistics NaN and "
+                 "silently rejects every point)")
 
     scale, R, t, epsg = parse_geo_transform(args.geo_transform)
     print(f"Sim3: scale={scale:.6f}  EPSG:{epsg}")
@@ -95,6 +98,11 @@ def main():
     # --- floater removal (COLMAP frame) ---
     mask = np.ones(len(xyz), dtype=bool)
     for i in range(args.sor_iters):
+        n_now = int(mask.sum())
+        if n_now <= args.sor_k + 1:
+            print(f"  WARNING: only {n_now} points left (<= k+1 = {args.sor_k + 1}); "
+                  f"skipping remaining SOR passes - too few points for neighbour statistics.")
+            break
         m = sor_mask(xyz[mask], k=args.sor_k, std_ratio=args.sor_std)
         idx = np.where(mask)[0]
         mask[idx[~m]] = False

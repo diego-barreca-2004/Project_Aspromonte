@@ -233,6 +233,10 @@ def load_dtm(path):
         nodata, T, crs = ds.nodata, ds.transform, ds.crs
     if nodata is not None:
         Z[Z == nodata] = np.nan
+    if T.e > 0:
+        print("  WARNING: DTM raster is south-up (row spacing > 0); surface normals assume "
+              "north-up and their N component will be sign-flipped - ICP will degrade. "
+              "Re-export the DTM north-up.")
     px, py = abs(T.a), abs(T.e)
     gy, gx = np.gradient(Z, py, px)                       # d/d(row=south), d/d(col=east)
     nrm = np.stack([-gx, gy, np.ones_like(Z)], axis=-1)   # normal of z=f(E,N), +up
@@ -274,7 +278,12 @@ def transform_appearance(v, names, c, R, N):
     # rotation quaternions:  q' = quat(R) (x) normalize(q)
     if all(k in names for k in ("rot_0", "rot_1", "rot_2", "rot_3")):
         q = np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], 1).astype(np.float64)
-        q /= np.linalg.norm(q, axis=1, keepdims=True) + 1e-12
+        nq = np.linalg.norm(q, axis=1, keepdims=True)
+        n_zero = int((nq[:, 0] == 0).sum())
+        if n_zero:
+            print(f"  WARNING: {n_zero} Gaussians have zero-norm rotation quaternions "
+                  f"(malformed splat); their orientation after rotation is undefined.")
+        q /= nq + 1e-12
         qp = quat_mul(mat2quat(R), q)
         qp /= np.linalg.norm(qp, axis=1, keepdims=True) + 1e-12
         v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"] = qp[:, 0], qp[:, 1], qp[:, 2], qp[:, 3]
@@ -344,7 +353,10 @@ def main():
     R2, t2 = np.eye(3), np.zeros(3)
     if args.dtm:
         Z, nrm, T, crs = load_dtm(args.dtm)
-        if crs is not None and epsg_t is not None and crs.to_epsg() not in (None, epsg_t):
+        if crs is None:
+            print("  WARNING: DTM has no CRS tag; cannot verify it matches the transform's "
+                  f"EPSG:{epsg_t}. Proceeding on trust.")
+        elif epsg_t is not None and crs.to_epsg() not in (None, epsg_t):
             print(f"  WARNING: DTM CRS EPSG:{crs.to_epsg()} != transform EPSG:{epsg_t}. "
                   "Reproject the DTM (dtm_merge_reproject.py) to match.")
 
