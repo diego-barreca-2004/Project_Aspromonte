@@ -61,6 +61,10 @@ georeferencing front-end:
 | `dtm_merge_reproject.py` | Georeferencing | Mosaic the open LiDAR DTM tiles and reproject them to UTM. |
 | `georef_splat.py` | Georeferencing | Apply the Sim3 to the 3DGS splat, optionally refine onto the DTM by ICP, and write both the absolute-UTM splat and a recentred `view.ply` for SuperSplat — one self-contained step. |
 | `georef_cloud.py` | Change detection | Apply the Sim3 to a dense MVS cloud with statistical-outlier floater removal, writing a **float64** absolute-UTM cloud for M3C2 (Track 2). |
+| `run_pipeline.py` | Orchestration | One-command per-epoch run (`ingest → sfm → geo → dense → georef [→ splat]`), driven by `pipeline.conf`, with QC gates that halt on contract violations. Resumable; `--from`/`--to` to run a sub-range. |
+| `pipeline.conf` | Orchestration | Shared reconstruction contract (paths, resolution, matcher, QC thresholds) so every epoch run through `run_pipeline.py` is reconstructed identically. |
+| `run_m3c2.py` | Change detection | Scripted M3C2 between two georeferenced epochs (py4dgeo) — replaces the interactive CloudCompare M3C2 dialog: ICP registration (CloudCompare matrix or built-in auto-ICP), mutual-footprint crop, core-point picking, stable-patch stats, and a report/map/histogram. |
+| `test_run_m3c2.py` | Change detection | End-to-end test of `run_m3c2.py` against a synthetic ground-truth scene (known box/hole, known misalignment, known junk cluster). |
 | `BUILD_COLMAP_CUDA.md` | Build guide | Build COLMAP with CUDA for Blackwell (`sm_120`, arch-89 workaround) and run the dense MVS — required for Track 2. |
 
 Third-party components (COLMAP, the Inria 3DGS code) are **not** vendored here — they are
@@ -80,10 +84,13 @@ installed/built separately as described below.
 **Python packages:** `numpy`, `scipy`, `opencv-python`, `pyproj`, `rasterio`, `plyfile`
 (the last four for the georeferencing scripts; `scipy` is used by `georef_cloud.py`).
 `ExifTool` ≥ 13.0 is required by `ingest_gopro.py` to read the GPS9 telemetry stream.
+`run_m3c2.py` additionally needs `py4dgeo` (the M3C2 implementation) and `matplotlib`
+(report maps/histograms); `scipy` is reused there for the mutual-footprint crop and
+trimmed ICP.
 
 ```bash
 python3 -m venv venv && source venv/bin/activate
-pip install numpy scipy opencv-python pyproj rasterio plyfile
+pip install numpy scipy opencv-python pyproj rasterio plyfile py4dgeo matplotlib
 ```
 
 ## Quick start
@@ -163,6 +170,22 @@ A single run writes **two outputs**:
   level. Add `--clip-dtm <m>` to drop floaters farther than `<m>` metres (vertically) from the
   DTM **from the view only** — the UTM deliverable stays intact (requires `--dtm`).
 
+### Orchestrating an epoch: `run_pipeline.py`
+
+Steps 2–7 (minus the manual DTM download) can be run as one command per epoch, driven by
+the shared contract in `pipeline.conf`. QC gates halt the run — with a clear message —
+at the points that have historically failed silently (wrong ingest resolution, thin SfM
+registration, a weak GPS fit, the Blackwell 0-fused-points bug, a mislocated georef):
+
+```bash
+python3 run_pipeline.py --config pipeline.conf --video seg01.mp4 --workdir seg01
+```
+
+Each stage skips if its output already exists (resume), `--force` re-runs it, `--from`/
+`--to` restrict the range (e.g. `--from dense` to resume after a fix), and `--dry-run`
+previews the commands without executing them. `splat=true` in `pipeline.conf` runs 3DGS
+training too; otherwise the pipeline stops at the georeferenced dense cloud (Track 2).
+
 ## Track 2 — georeferenced change detection
 
 Track 2 reuses the same front-end (capture, calibration, SfM, DTM, and the Sim3 in
@@ -212,9 +235,24 @@ file stays absolute). Reference run on `seg01`: 4,533,733 → 4,460,797 points a
 ### Change-detection workflow (in progress)
 
 1. Reconstruct a second epoch (same site, a controlled change) through the identical
-   pipeline to `fused_utm2.ply`.
+   pipeline (`run_pipeline.py`, same `pipeline.conf`) to `fused_utm2.ply`.
 2. Both clouds are already coarsely aligned in UTM; a fine ICP between them removes the
-   residual, then **M3C2** yields the change map.
+   residual, then **M3C2** yields the change map — scripted end to end by `run_m3c2.py`:
+   crop to the mutual footprint, register (a CloudCompare ICP matrix via `--icp`, or the
+   built-in point-to-point + trimmed point-to-plane `--auto-icp`), pick core points, run
+   M3C2 (py4dgeo), and write the distance/significance map plus stable-patch stats.
+
+   ```bash
+   python3 run_m3c2.py --ref seg01/colmap/dense/fused_utm.ply \
+                       --cmp seg01_ep2/colmap/dense/fused_utm.ply \
+                       --icp icp_ep2_to_ep1.txt --cc-shift -559000 -4214000 0 \
+                       --patch 559010,4214480,3 --out m3c2_out
+   ```
+
+   Run once with `--reg-error 0`, read the suggested value from the stable-patch stats
+   (rms of patch medians), then re-run with `--reg-error <that value>` so the
+   significant-change flag accounts for residual registration error. `test_run_m3c2.py`
+   validates the whole script against a synthetic scene with known ground truth.
 3. Distinguish structural change from benign change — the original contribution.
 
 **Level of detection.** Before introducing a change, run an *epoch-zero-zero*

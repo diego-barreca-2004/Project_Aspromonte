@@ -50,3 +50,8 @@ calib_out/
 # --- Logs / scratch ---
 *.log
 tmp/
+
+# --- M3C2 run outputs (large; regenerate with run_m3c2.py) ---
+m3c2_*/
+icp_*.txt
+testdata/
