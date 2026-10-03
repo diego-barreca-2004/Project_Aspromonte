@@ -1,384 +1,162 @@
-# Progetto Aspromonte
+# Aspromonte: georeferenced trail reconstruction and change detection from a walking GoPro
 
-A reproducible **photogrammetry → 3D Gaussian Splatting** pipeline for building a
-**georeferenced digital twin** of mountain-trail terrain in the Aspromonte massif
-(Reggio Calabria, southern Italy).
+Action-camera video of a mountain trail, turned into a georeferenced 3D Gaussian Splatting
+model and into change maps between repeated passes, in UTM coordinates.
 
-The pipeline turns ordinary action-camera video into a navigable 3D Gaussian Splatting
-(3DGS) reconstruction registered to real-world coordinates. It wraps the standard
-open-source stack — [COLMAP](https://colmap.github.io) for Structure-from-Motion and the
-[Inria 3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting)
-implementation for radiance-field reconstruction — and adds custom tooling for GoPro
-fisheye calibration, GPS-telemetry ingestion, and GPS-based georeferencing.
+<p align="center">
+  <img src="assets/splat_flythrough.gif" width="80%" alt="Fly-through of the georeferenced 3DGS model of epoch 2">
+  <br><em>3DGS model of the second pass, rendered along the walked path.</em>
+</p>
 
-The project has **two tracks** that share the same capture, calibration, SfM and
-georeferencing front-end:
+A GoPro HERO13 was walked three times along the same 152 m trail in the Aspromonte massif
+(Calabria, Italy). This repository goes from the raw video and its telemetry (GPS and
+gravity) to
 
-- **Track 1 — navigable splat** (the pipeline described here): the georeferenced 3DGS
-  reconstruction, for visualization and inspection. **Complete.**
-- **Track 2 — georeferenced change detection**: dense MVS point clouds of the same site
-  at two epochs, co-registered in the same UTM frame and differenced with **M3C2** to
-  detect structural change (fallen trees, erosion, washout, landslide) and separate it
-  from benign change (season, foliage, lighting). See *Track 2 — georeferenced change
-  detection* below.
+- **Track 1:** a navigable 3D Gaussian Splatting (3DGS) model, georeferenced by GPS and
+  refined by ICP onto an open 1 m LiDAR terrain model;
+- **Track 2:** dense point clouds of each pass in the same UTM frame, compared with M3C2
+  and DSM differencing to find what changed.
 
-> Status: research / thesis work in progress. Track 1 runs end-to-end; Track 2's
-> single-epoch dense pipeline (SfM → CUDA dense MVS → floater-cleaned UTM cloud) is
-> working, and two-epoch change detection is in progress. Scaling to a full trail network
-> is discussed under *Limitations & future work*.
+It wraps [COLMAP](https://colmap.github.io) (incremental and global SfM, dense MVS) and the
+[Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting) code, and adds what
+they do not cover: GoPro fisheye calibration, telemetry ingestion, robust GPS
+georeferencing on near-linear tracks, gravity priors from the GoPro IMU, ICP onto the DTM,
+and scripted change detection with QC gates.
 
-## Pipeline
-
-```
- GoPro video       frames + GPS         calibration              SfM               3D Gaussians           GPS alignment     georeferenced splat
- (HERO13 Wide) ──▶ ingest_gopro.py ──▶ calibrate_camera.py ──▶ run_colmap.py ──▶ 3DGS training     ──▶ geo_align.py  ──▶ georef_splat.py
-                                        (ChArUco, fisheye)       (COLMAP)          (graphdeco-inria)      (GPS → Sim3)      (Sim3 + ICP → UTM)
-```
-
-1. **Capture** — GoPro HERO13, 5.3K 8:7 Wide, fixed exposure (see *Capture configuration*).
-2. **Frame & GPS extraction** (`ingest_gopro.py`) — decode frames at a chosen rate and
-   parse the HERO13 **GPS9** telemetry stream into a per-frame `gps.csv`.
-3. **Camera calibration** (`calibrate_camera.py`) — ChArUco board, **OPENCV_FISHEYE**
-   (Kannala–Brandt) model, the correct model for the GoPro Wide field of view.
-4. **Structure-from-Motion** (`run_colmap.py`) — COLMAP feature extraction, sequential
-   matching, mapping and undistortion, producing a pinhole workspace ready for 3DGS.
-5. **3D Gaussian Splatting** — training with the Inria implementation (cloned separately).
-6. **Georeferencing** (`geo_align.py`) — associate each frame with its GPS position and
-   fit the similarity transform that maps the reconstruction into a metric CRS, using a
-   robust Umeyama fit (COLMAP's `model_aligner` is unstable on near-linear walking tracks).
-   Apply it to the splat — and optionally refine onto an open LiDAR DTM by ICP — in one
-   self-contained step with `georef_splat.py`.
-
-## Repository contents
-
-| File | Stage | Description |
-|------|-------|-------------|
-| `calibrate_camera.py` | Calibration | ChArUco fisheye calibration; outputs intrinsics + distortion as JSON. |
-| `assets/GoPro_Calibration.pdf` | Calibration | Printable ChArUco board (9×6 squares, `DICT_4X4_50`) — matches `calibrate_camera.py`'s defaults. |
-| `ingest_gopro.py` | Ingestion | GoPro video → frames + per-frame `gps.csv` (HERO13 GPS9 telemetry). |
-| `run_colmap.py` | SfM | COLMAP wrapper (fisheye-aware, optional calibration injection, CPU by default). |
-| `geo_align.py` | Georeferencing | GPS → world similarity transform (robust Umeyama fit, UTM). |
-| `dtm_merge_reproject.py` | Georeferencing | Mosaic the open LiDAR DTM tiles and reproject them to UTM. |
-| `georef_splat.py` | Georeferencing | Apply the Sim3 to the 3DGS splat, optionally refine onto the DTM by ICP, and write both the absolute-UTM splat and a recentred `view.ply` for SuperSplat — one self-contained step. |
-| `georef_cloud.py` | Change detection | Apply the Sim3 to a dense MVS cloud with statistical-outlier floater removal, writing a **float64** absolute-UTM cloud for M3C2 (Track 2). |
-| `run_pipeline.py` | Orchestration | One-command per-epoch run (`ingest → sfm → geo → dense → georef [→ splat]`), driven by `pipeline.conf`, with QC gates that halt on contract violations. Resumable; `--from`/`--to` to run a sub-range. |
-| `pipeline.conf` | Orchestration | Shared reconstruction contract (paths, resolution, matcher, QC thresholds) so every epoch run through `run_pipeline.py` is reconstructed identically. |
-| `run_m3c2.py` | Change detection | Scripted M3C2 between two georeferenced epochs (py4dgeo) — replaces the interactive CloudCompare M3C2 dialog: ICP registration (CloudCompare matrix or built-in auto-ICP), mutual-footprint crop, core-point picking, stable-patch stats, and a report/map/histogram. |
-| `tests/test_run_m3c2.py` | Change detection | End-to-end test of `run_m3c2.py` against a synthetic ground-truth scene (known box/hole, known misalignment, known junk cluster). |
-| `docs/BUILD_COLMAP_CUDA.md` | Build guide | Build COLMAP with CUDA for Blackwell (`sm_120`, arch-89 workaround) and run the dense MVS — required for Track 2. |
-
-Third-party components (COLMAP, the Inria 3DGS code) are **not** vendored here — they are
-installed/built separately as described below.
-
-## Requirements
-
-**Reference environment** (what this was developed and tested on):
-
-- WSL2 (Ubuntu) on Windows 11
-- NVIDIA RTX 5070Ti (Blackwell, compute capability `sm_120`), 12 GB VRAM
-- CUDA Toolkit 12.8, NVIDIA driver supporting CUDA ≥ 12.8
-- Python 3.12, PyTorch built for CUDA 12.8 (`cu128`)
-- [COLMAP](https://colmap.github.io) ≥ 3.7 — CUDA build **required for Track 2** dense MVS
-  (Blackwell needs an arch-89 build; see `docs/BUILD_COLMAP_CUDA.md`), optional for Track 1
-
-**Python packages:** `numpy`, `scipy`, `opencv-python`, `pyproj`, `rasterio`, `plyfile`
-(the last four for the georeferencing scripts; `scipy` is used by `georef_cloud.py`).
-`ExifTool` ≥ 13.0 is required by `ingest_gopro.py` to read the GPS9 telemetry stream.
-`run_m3c2.py` additionally needs `py4dgeo` (the M3C2 implementation) and `matplotlib`
-(report maps/histograms); `scipy` is reused there for the mutual-footprint crop and
-trimmed ICP.
-
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install numpy scipy opencv-python pyproj rasterio plyfile py4dgeo matplotlib
-```
+<p align="center">
+  <img src="assets/pipeline.svg" width="100%" alt="Pipeline overview">
+</p>
 
 ## Quick start
 
-Each stage writes into a per-segment working directory (`seg01/` in the examples).
-
-**1 — Calibrate the camera** (once per lens/setting; uses a ChArUco capture clip, can also be done after the second step):
-
-```bash
-python3 calibrate_camera.py --video calib.mp4 --out ./calib_out
-```
-
-Print `assets/GoPro_Calibration.pdf` (a 9×6 ChArUco board, `DICT_4X4_50`) and film it while moving the
-camera through varied angles and distances; the script's `--cols 9 --rows 6` defaults match this
-board.
-
-**2 — Extract frames and GPS** from a survey clip:
-
-```bash
-python3 ingest_gopro.py --video seg01.mp4 --out ./seg01 --every-sec 0.2 --longest-side 1600
-```
-
-**3 — Run Structure-from-Motion** (CPU by default; injects the calibration as initial intrinsics):
-
-```bash
-python3 run_colmap.py --images ./seg01/frames --out ./seg01/colmap \
-        --calibration ./calib_out/calibration_fisheye.json
-```
-
-**4 — Train 3D Gaussian Splatting** (Inria implementation, cloned and built separately):
-
-```bash
-python3 train.py -s ./seg01/colmap/undistorted -m ./seg01/gs_output --data_device cpu
-# output: ./seg01/gs_output/point_cloud/iteration_30000/point_cloud.ply
-```
-
-**5 — Georeference** the reconstruction from GPS:
-
-```bash
-python3 geo_align.py --gps ./seg01/gps.csv \
-        --images ./seg01/colmap/undistorted/images \
-        --model  ./seg01/colmap/undistorted/sparse/0 \
-        --out    ./seg01/colmap/geo_transform.txt
-# writes the similarity transform (scale + rotation + translation) to georeference the splat
-```
-
-**6 — Prepare the DTM** (mosaic + reproject the downloaded LiDAR tiles to UTM; tile sources
-under *Georeferencing & elevation data*):
-
-```bash
-python3 dtm_merge_reproject.py --in ./dtm_tiles --out aspromonte_dtm_utm33n.tif
-```
-
-**7 — Georeference the splat** (apply the Sim3, refine onto the DTM by ICP, and write both
-outputs in one run):
-
-```bash
-python3 georef_splat.py \
-        --ply ./seg01/gs_output/point_cloud/iteration_30000/point_cloud.ply \
-        --transform ./seg01/colmap/geo_transform.txt \
-        --dtm aspromonte_dtm_utm33n.tif \
-        --out ./seg01/gs_output/point_cloud_utm_icp.ply
-```
-
-The ICP runs in Python — no CloudCompare required — and prints the ground-to-DTM residual.
-Omit `--dtm` (and step 6) for a Sim3-only georeferencing without refinement.
-
-A single run writes **two outputs**:
-
-- **`--out`** — the splat in **absolute UTM**, the canonical deliverable (GIS / CloudCompare,
-  which absorbs the large coordinates with a global shift on load).
-- **`view.ply`** (written beside `--out`, with a `view.ply.offset.txt` sidecar mapping local →
-  UTM) — the same splat recentred on a local origin, for WebGL viewers like the browser-based
-  [SuperSplat editor](https://superspl.at/editor), which cannot draw absolute UTM magnitudes.
-  Change its path with `--view-out`, or skip it entirely with `--no-view`. The data are Z-up and
-  the file is **not** re-oriented, so in SuperSplat set **Rotation X = 90** on import to view it
-  level. Add `--clip-dtm <m>` to drop floaters farther than `<m>` metres (vertically) from the
-  DTM **from the view only** — the UTM deliverable stays intact (requires `--dtm`).
-
-### Orchestrating an epoch: `run_pipeline.py`
-
-Steps 2–7 (minus the manual DTM download) can be run as one command per epoch, driven by
-the shared contract in `pipeline.conf`. QC gates halt the run — with a clear message —
-at the points that have historically failed silently (wrong ingest resolution, thin SfM
-registration, a weak GPS fit, the Blackwell 0-fused-points bug, a mislocated georef):
+One epoch, end to end (frames, SfM, georeferencing, dense cloud and, with `splat true`,
+the 3DGS model), driven by the shared reconstruction contract in `pipeline.conf`:
 
 ```bash
 python3 run_pipeline.py --config pipeline.conf --video seg01.mp4 --workdir seg01
 ```
 
-Each stage skips if its output already exists (resume), `--force` re-runs it, `--from`/
-`--to` restrict the range (e.g. `--from dense` to resume after a fix), and `--dry-run`
-previews the commands without executing them. `splat=true` in `pipeline.conf` runs 3DGS
-training too; otherwise the pipeline stops at the georeferenced dense cloud (Track 2).
+Each stage resumes from existing outputs; `--from`/`--to` restrict the range, `--dry-run`
+prints the plan. QC gates stop the run on the failures that are otherwise silent (thin
+registration, weak GPS fit, empty dense output, mislocated georeferencing).
 
-## Track 2 — georeferenced change detection
-
-Track 2 reuses the same front-end (capture, calibration, SfM, DTM, and the Sim3 in
-`geo_transform.txt`) but replaces 3DGS with **dense MVS**, and compares two epochs. The
-Sim3 applies 1:1 to the dense cloud because `image_undistorter` does not move the 3D
-coordinate frame.
-
-### Dense reconstruction (CUDA COLMAP)
-
-Dense MVS (`patch_match_stereo`) is CUDA-only. On Blackwell GPUs, COLMAP must be built
-with `-DCMAKE_CUDA_ARCHITECTURES=89` (**not** 120) — arch 120 miscompiles the PatchMatch
-kernels and silently yields empty depth maps (0 fused points). The full build (with the
-GCC-13 source patches) and the exact `image_undistorter` → `patch_match_stereo` →
-`stereo_fusion` commands are in [`docs/BUILD_COLMAP_CUDA.md`](docs/BUILD_COLMAP_CUDA.md).
-
-### Reconstruction contract (identical for both epochs)
-
-For M3C2 to measure *terrain* change rather than pipeline differences, epoch 1 and
-epoch 2 must be reconstructed with identical parameters ("like-with-like"):
-
-| Stage | Parameter | Value |
-|-------|-----------|-------|
-| `patch_match_stereo` | `max_image_size` | `1000` |
-| `patch_match_stereo` | `geom_consistency` | `true` |
-| `patch_match_stereo` | `filter` | `true` |
-| `stereo_fusion` | `input_type` | `geometric` (default thresholds) |
-| `georef_cloud.py` (SOR) | `iters / k / std` | `2 / 20 / 2.0` |
-
-### Georeference the dense cloud
-
-`georef_cloud.py` removes MVS floaters (iterative SOR), applies the Sim3, and writes the
-cloud in **float64** absolute UTM — float32 would quantise the ~4.2 × 10⁶ UTM coordinates
-to ~0.25 m and defeat sub-metre change detection:
+Compare two epochs:
 
 ```bash
-python3 georef_cloud.py \
-        ./seg01/colmap/dense/fused.ply \
-        ./seg01/colmap/geo_transform.txt \
-        ./seg01/colmap/dense/fused_utm.ply
+python3 run_m3c2.py --ref seg01_ep2/colmap/dense/fused_utm.ply \
+    --cmp seg01_ep3/colmap/dense/fused_utm.ply --auto-icp \
+    --track seg01_ep2/gps.csv --max-track-dist 10 --out m3c2_ep3_vs_ep2
+# reuse the registration it prints (matrix and local shift):
+python3 dsm_change.py --ref seg01_ep2/colmap/dense/fused_utm.ply \
+    --cmp seg01_ep3/colmap/dense/fused_utm.ply \
+    --icp m3c2_ep3_vs_ep2/icp_auto.txt --cc-shift -558997 -4214492 -123 \
+    --track seg01_ep2/gps.csv --out dsm_ep3_vs_ep2
 ```
 
-Open `fused_utm.ply` in CloudCompare (accept the global shift on load — display-only, the
-file stays absolute). Reference run on `seg01`: 4,533,733 → 4,460,797 points after SOR
-(the floaters were ~1.6 % of points but held ~98 % of the bounding box); UTM extent
-≈ 192 × 127 × 49 m; centroid E ≈ 558995, N ≈ 4214492.
+Compare incremental and global SfM, with and without gravity priors
+(requires `pycolmap>=4.2`):
 
-### Change-detection workflow (in progress)
+```bash
+python3 compare_mappers.py --epoch ./seg01_ep2 --video Attempt_2.MP4 \
+    --calibration ./calib_out/calibration_fisheye.json \
+    --dtm aspromonte_dtm_utm33n.tif --out ./sfm_compare/seg01_ep2
+```
 
-1. Reconstruct a second epoch (same site, a controlled change) through the identical
-   pipeline (`run_pipeline.py`, same `pipeline.conf`) to `fused_utm2.ply`.
-2. Both clouds are already coarsely aligned in UTM; a fine ICP between them removes the
-   residual, then **M3C2** yields the change map — scripted end to end by `run_m3c2.py`:
-   crop to the mutual footprint, register (a CloudCompare ICP matrix via `--icp`, or the
-   built-in point-to-point + trimmed point-to-plane `--auto-icp`), pick core points, run
-   M3C2 (py4dgeo), and write the distance/significance map plus stable-patch stats.
+Individual stages and their options: [docs/PIPELINE.md](docs/PIPELINE.md).
 
-   ```bash
-   python3 run_m3c2.py --ref seg01/colmap/dense/fused_utm.ply \
-                       --cmp seg01_ep2/colmap/dense/fused_utm.ply \
-                       --icp icp_ep2_to_ep1.txt --cc-shift -559000 -4214000 0 \
-                       --patch 559010,4214480,3 --out m3c2_out
-   ```
+## Setup
 
-   Run once with `--reg-error 0`, read the suggested value from the stable-patch stats
-   (rms of patch medians), then re-run with `--reg-error <that value>` so the
-   significant-change flag accounts for residual registration error. `test_run_m3c2.py`
-   validates the whole script against a synthetic scene with known ground truth.
-3. Distinguish structural change from benign change — the original contribution.
+```bash
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
+```
 
-**Level of detection.** Before introducing a change, run an *epoch-zero-zero*
-repeatability test (two clouds of the unchanged scene) and measure the M3C2 standard
-deviation on stable ground — that is the detection floor. A controlled-change object must
-sit ~3–5× above it: larger than the point spacing and taller than the noise. A rigid
-object of known size (a 20–40 cm box) gives quantified accuracy; moved soil/rock gives a
-positive + negative signature closest to the real washout/erosion use case. Thin, dark or
-glossy objects (twigs, leaves) reconstruct poorly and fall under the floor — avoid them.
-Acquire both epochs with matching path, camera, time of day and weather to minimise the
-lighting confound at capture.
+- [COLMAP](https://colmap.github.io) with CUDA for dense MVS. On Blackwell GPUs build it for
+  arch 89: [docs/BUILD_COLMAP_CUDA.md](docs/BUILD_COLMAP_CUDA.md).
+- The [Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting) code, cloned into
+  `gaussian-splatting/`, for Track 1 only.
+- ExifTool ≥ 13.0 for the GPS9 and GRAV telemetry streams.
+- `pycolmap>=4.2` (CPU wheel) for `compare_mappers.py`.
 
-## Capture configuration
+Tested on WSL2 (Ubuntu), RTX 5070 Ti Laptop (12 GB), CUDA 12.8, Python 3.12. Capture
+settings and environment notes: [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
-Settings chosen for dense-forest dynamic range and to minimise rolling-shutter / motion
-artefacts. **Fixed exposure is essential** for a temporally consistent reconstruction.
+Tests run on synthetic scenes with known ground truth:
 
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| Resolution / aspect | 5.3K, 8:7, Wide | Maximum sensor area and field of view. |
-| Frame rate | 30 fps | Sufficient overlap at walking pace. |
-| Shutter | 1/400 s | Sharp frames; suppresses rolling-shutter "jello". |
-| Anti-flicker | 50 Hz | Mains frequency (Italy / EU). |
-| Stabilisation | HyperSmooth **off** | Warping breaks the rigid pinhole model. |
-| Horizon lock | **off** | Same reason — no per-frame reprojection. |
-| White balance | locked (5500 K) | Consistent colour across frames. |
-| ISO | 100–800 | Limit noise while keeping exposure stable. |
-| Colour profile | Flat | Preserves dynamic range (grade uniformly later). |
+```bash
+python3 tests/test_run_m3c2.py && python3 tests/test_dsm_change.py && python3 tests/test_gravity_georef.py
+```
 
-A chest mount is recommended over a handlebar mount on rough terrain (body damping reduces
-vibration). Lens model for the Wide field of view is **OPENCV_FISHEYE**.
+## Results
 
-## Notes on the compute environment
+### Structure-from-Motion and georeferencing
 
-A few hard-won, hardware-specific findings, documented for reproducibility:
+Three passes of about 600 frames each, pycolmap 4.2.1 on CPU, one run per configuration:
 
-- **CUDA toolkit (WSL).** On WSL2, install the toolkit from NVIDIA's `wsl-ubuntu` apt repo,
-  which gives you the toolkit **without** a Linux GPU driver (the driver is provided by the
-  Windows host — installing a Linux one breaks WSL's CUDA passthrough). The
-  `cuda-keyring_*.deb` is only the one-shot package that registers that repo; it is **not**
-  part of this repository (it is `.gitignore`d):
+| Mapper | Registered | Reprojection error | Time | Failures |
+|--------|-----------|--------------------|------|----------|
+| COLMAP incremental | all frames | 0.39–0.45 px | 436–655 s | none |
+| COLMAP global (GLOMAP) | all frames | 0.38–0.45 px | 170–440 s | ep1 bent by up to 14° |
+| global + GoPro gravity priors | all frames | 0.38–0.45 px | 188–253 s | none |
 
-  ```bash
-  wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
-  sudo dpkg -i cuda-keyring_1.1-1_all.deb
-  sudo apt-get update
-  sudo apt-get -y install cuda-toolkit-12-8
-  ```
-  See NVIDIA's *CUDA on WSL* guide for the canonical steps.
+The bent ep1 model has a normal reprojection error; only the GPS residual (5.75 m) and
+the disagreement with the GoPro gravity reveal it. A second random seed bends it at the
+same place.
 
-- **3DGS on Blackwell (sm_120):** use a `cu128` PyTorch in your venv and build the CUDA
-  submodules against it — do **not** use the repo's pinned conda environment. If the
-  rasterizer fails to compile with errors about `uint32_t` / `uintptr_t`, add
-  `#include <cstdint>` to `diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h`.
-- **COLMAP SIFT runs on CPU here.** COLMAP's GPU SIFT (SiftGPU) is slow/unreliable on
-  recent GPUs and under WSL; CPU feature extraction and matching are faster and more
-  correct. `run_colmap.py` defaults to CPU (override with `--use-gpu 1`).
-- **COLMAP dense MVS on Blackwell (sm_120):** `patch_match_stereo` is CUDA-only and, when
-  built for arch 120, silently produces noise depth maps / 0 fused points on RTX 50xx (a
-  known codegen bug). Build COLMAP with `-DCMAKE_CUDA_ARCHITECTURES=89` so the kernels run
-  via PTX-JIT to `sm_120`, and add `#include <memory>` to `src/colmap/image/line.cc` and
-  `src/colmap/mvs/workspace.h` for GCC 13. Full guide: `docs/BUILD_COLMAP_CUDA.md`.
-- **VRAM:** on 12 GB, train with `--data_device cpu` so source images stay in system RAM;
-  drop to `-r 2` if you still hit out-of-memory during densification.
+Rotation left between passes by the georeferencing (global model with gravity priors;
+the incremental model gives the same values within 0.3°):
 
-## Georeferencing & elevation data
+| Georeferencing | ep2 → ep1 | ep3 → ep2 | ep3 → ep1 | GPS residual (median) |
+|----------------|-----------|-----------|-----------|-----------------------|
+| GPS only, Sim3 (7 DoF) | 5.6° | 5.1° | 0.7° | 0.31–0.55 m |
+| Gravity-levelled (4 DoF) | **0.6°** | **1.4°** | 1.1° | 0.95–1.33 m |
 
-`geo_align.py` gives the reconstruction correct **scale** and metre-level georeferencing
-from the GoPro GPS track. Consumer GPS limits absolute accuracy to a few metres; for
-sub-metre registration, reproject an open LiDAR Digital Terrain Model (DTM) to the same CRS
-and refine with ICP on the ground portions of the model — `georef_splat.py` does this in Python
-(step 7), so CloudCompare is not required.
+On a near-straight walk GPS does not constrain the roll about the direction of travel;
+fixing the vertical with the GoPro gravity removes most of the tilt between passes, at
+the cost of a larger GPS residual. Details: [docs/SFM_COMPARISON.md](docs/SFM_COMPARISON.md).
 
-Open elevation data for the area:
+### Change detection
 
-- **PST LiDAR DTM** (Ministero dell'Ambiente / MASE), up to 1 m, CC BY 4.0 —
-  [gn.mase.gov.it](https://gn.mase.gov.it)
-- **Regione Calabria** DTM 5 m — [geoportale.regione.calabria.it/opendata](http://geoportale.regione.calabria.it/opendata)
-- **TINITALY** DTM 10 m, nationwide (INGV) — [tinitaly.pi.ingv.it](http://tinitaly.pi.ingv.it)
+On bare ground the DSM difference between two passes has a noise level (NMAD) of 1.3 cm
+(ep2 vs ep1) and 4.0 cm (ep3 vs ep2, low light); M3C2 gives 3.9 and 6.3 cm. Of the objects
+placed on the trail, the bucket is recovered 8 cm from its expected position
+(+27 cm, 0.11 m²); the cylinder and the ball are not reconstructed by MVS at the working
+resolution, and a 1.3 cm plasterboard sheet is below the detection floor.
 
-The study area sits in **UTM zone 33N** (EPSG:32633), the default target CRS in `geo_align.py`.
-Downloaded PST tiles (WGS84 GeoTIFFs) can be mosaicked and reprojected to that CRS in one step
-with `dtm_merge_reproject.py`.
+<p align="center">
+  <img src="assets/change_map.png" width="80%" alt="DSM difference between epochs 3 and 2">
+</p>
 
-## Limitations & future work
+Automatic detection is **not yet discriminative**: with default parameters, ep3 vs ep2
+yields 44 candidates with the bucket ranked 25th, and the object-free control (ep2 vs ep1)
+yields 48. Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
 
-- **Capture geometry.** A straight, forward-facing walk gives little parallax off-axis,
-  producing floating artefacts beside the trail. A weaving path and occasional lateral /
-  look-around motion provide the multi-view coverage 3DGS needs.
-- **Georeferencing accuracy.** GPS-only alignment is metre-level. Ground control points or
-  RTK GPS would be required for survey-grade accuracy.
-- **Scale.** A single segment is demonstrated. Scaling to a trail network calls for a
-  different strategy — anchoring to existing georeferenced LiDAR/DTM rather than
-  reconstructing terrain from scratch, selective high-fidelity capture, and faster global
-  SfM ([GLOMAP](https://github.com/colmap/glomap)) — evaluated empirically against
-  incremental COLMAP, which is more robust on repetitive forest texture.
-- **Aerial river-corridor application.** The same two-epoch M3C2 engine applies to drone
-  surveys of river banks and embankments (erosion, slips, fallen trees, debris). Three
-  technical requirements distinguish it from the walked-trail case: the **water surface
-  must be masked out** before differencing (moving, reflective and textureless, it yields
-  unstable false surfaces that M3C2 would read as change — the method is strongest on
-  banks, embankments and exposed bed); **cross-epoch co-registration needs ground control
-  points** or fixed structures as a common anchor, since consumer GPS and ICP are
-  insufficient on low-rigid-structure scenes; and long corridor captures (thousands of
-  frames over kilometres) are the regime where **global SfM (GLOMAP)** genuinely pays off.
-  Water-level and riparian-vegetation variation between epochs is a harder version of the
-  trail's benign-change confounder.
+## Limitations
+
+- **One segment, three passes.** All numbers come from a single 152 m trail on an open
+  slope. Forest canopy, longer sequences and other cameras are untested.
+- **Residual tilt.** Even after gravity levelling, passes differ by up to 1.5°, and the ICP
+  onto the 1 m DTM still tilts each model by 1.6–3.2°. A misalignment between the GoPro
+  IMU and the optical axis, a bias of the ICP on grass, or both could explain it; they
+  have not been separated yet.
+- **Absolute accuracy.** Consumer GPS gives metre-level georeferencing; the ICP onto the
+  DTM brings the ground to 0.3–0.4 m RMS.
+- **Rigid alignment between epochs.** A single rigid transform does not absorb the drift
+  along the sequence; most false positives come from the ends of the sequence and from a
+  stretch with non-rigid drift.
+- **Small objects.** Thin, dark or glossy objects are missed at `max_image_size` 1000.
+- **Licensing of Track 1.** The Inria 3DGS code is non-commercial; see below.
 
 ## License
 
-The code in this repository is released under the **MIT License** (see [`LICENSE`](LICENSE)).
-
-This pipeline depends on third-party software distributed under its own terms — notably the
-Inria 3D Gaussian Splatting code (non-commercial research license), COLMAP (BSD), and GLOMAP
-(BSD-3). Those licenses govern their respective components.
-
-The Inria non-commercial license applies to **Track 1 only** (splat training/rendering);
-the **Track 2 change-detection chain** — COLMAP SfM + dense MVS plus the scripts in this
-repository — does not depend on the Inria code and is covered entirely by permissive
-licenses (BSD / MIT). Permissively licensed splat renderers also exist (e.g. `gsplat`,
-Apache-2.0).
+The code in this repository is released under the MIT License ([LICENSE](LICENSE)).
+Third-party components keep their own terms: COLMAP and GLOMAP (BSD), the Inria 3DGS code
+(non-commercial research license). The Inria license applies to Track 1 only; Track 2
+(COLMAP SfM and dense MVS plus the scripts here) depends only on permissive licenses.
+Permissively licensed splat renderers also exist (e.g. `gsplat`, Apache-2.0).
 
 ## Acknowledgements
 
-Built on the work of the [COLMAP](https://colmap.github.io),
-[GLOMAP](https://github.com/colmap/glomap), and
-[3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting) projects, and
-on OpenCV's ChArUco calibration tools. Open elevation data courtesy of MASE, Regione
-Calabria, and INGV (TINITALY).
+Built on [COLMAP](https://colmap.github.io), [GLOMAP](https://github.com/colmap/glomap),
+[3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting),
+[py4dgeo](https://github.com/3dgeo-heidelberg/py4dgeo) and OpenCV. Elevation data: PST
+LiDAR DTM (MASE, CC BY 4.0), Regione Calabria and TINITALY (INGV).
