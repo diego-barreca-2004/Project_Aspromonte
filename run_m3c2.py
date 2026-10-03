@@ -389,7 +389,7 @@ def main(argv=None):
     log(f"  normal scale  D = {args.normal_d} m diameter -> radius {args.normal_d / 2}")
     log(f"  projection    d = {args.proj_d} m diameter -> radius {args.proj_d / 2}")
     log(f"  max depth       = {args.max_depth} m | reg. error = {args.reg_error} m")
-    log(f"  normals: on core points from reference, oriented +Z")
+    log("  normals: on core points from reference, oriented +Z")
     e1 = py4dgeo.Epoch(np.ascontiguousarray(ref_l))
     e2 = py4dgeo.Epoch(np.ascontiguousarray(cmp_l))
     m3c2 = py4dgeo.M3C2(

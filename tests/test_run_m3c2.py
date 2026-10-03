@@ -25,6 +25,8 @@ import numpy as np
 from plyfile import PlyData, PlyElement
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)  # run_m3c2 lives in the repository root
 T = os.path.join(HERE, "testdata")
 G = np.array([559000.0, 4214000.0, 120.0])       # fake UTM placement
 SHIFT = np.array([-559000.0, -4214000.0, 0.0])   # what CC would print at load
@@ -107,7 +109,7 @@ def build_fixture():
 
 
 def run_cli(outdir, extra):
-    cmd = [sys.executable, os.path.join(HERE, "run_m3c2.py"),
+    cmd = [sys.executable, os.path.join(ROOT, "run_m3c2.py"),
            "--ref", os.path.join(T, "ep1_utm.ply"),
            "--cmp", os.path.join(T, "ep2_utm.ply"),
            "--icp", os.path.join(T, "icp_console_paste.txt"),
@@ -126,7 +128,7 @@ def run_cli(outdir, extra):
 
 
 def run_cli_auto(outdir):
-    cmd = [sys.executable, os.path.join(HERE, "run_m3c2.py"),
+    cmd = [sys.executable, os.path.join(ROOT, "run_m3c2.py"),
            "--ref", os.path.join(T, "ep1_utm.ply"),
            "--cmp", os.path.join(T, "ep2_utm.ply"),
            "--auto-icp", "--out", outdir, "--core-spacing", "0.05",
@@ -153,7 +155,7 @@ def read_stats(outdir):
 def main():
     if os.path.isdir(T):
         shutil.rmtree(T)
-    fx = build_fixture()
+    build_fixture()
     checks = []
 
     def ok(name, cond, detail=""):

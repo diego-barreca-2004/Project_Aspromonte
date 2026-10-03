@@ -54,7 +54,7 @@ georeferencing front-end:
 | File | Stage | Description |
 |------|-------|-------------|
 | `calibrate_camera.py` | Calibration | ChArUco fisheye calibration; outputs intrinsics + distortion as JSON. |
-| `GoPro_Calibration.pdf` | Calibration | Printable ChArUco board (9×6 squares, `DICT_4X4_50`) — matches `calibrate_camera.py`'s defaults. |
+| `assets/GoPro_Calibration.pdf` | Calibration | Printable ChArUco board (9×6 squares, `DICT_4X4_50`) — matches `calibrate_camera.py`'s defaults. |
 | `ingest_gopro.py` | Ingestion | GoPro video → frames + per-frame `gps.csv` (HERO13 GPS9 telemetry). |
 | `run_colmap.py` | SfM | COLMAP wrapper (fisheye-aware, optional calibration injection, CPU by default). |
 | `geo_align.py` | Georeferencing | GPS → world similarity transform (robust Umeyama fit, UTM). |
@@ -64,8 +64,8 @@ georeferencing front-end:
 | `run_pipeline.py` | Orchestration | One-command per-epoch run (`ingest → sfm → geo → dense → georef [→ splat]`), driven by `pipeline.conf`, with QC gates that halt on contract violations. Resumable; `--from`/`--to` to run a sub-range. |
 | `pipeline.conf` | Orchestration | Shared reconstruction contract (paths, resolution, matcher, QC thresholds) so every epoch run through `run_pipeline.py` is reconstructed identically. |
 | `run_m3c2.py` | Change detection | Scripted M3C2 between two georeferenced epochs (py4dgeo) — replaces the interactive CloudCompare M3C2 dialog: ICP registration (CloudCompare matrix or built-in auto-ICP), mutual-footprint crop, core-point picking, stable-patch stats, and a report/map/histogram. |
-| `test_run_m3c2.py` | Change detection | End-to-end test of `run_m3c2.py` against a synthetic ground-truth scene (known box/hole, known misalignment, known junk cluster). |
-| `BUILD_COLMAP_CUDA.md` | Build guide | Build COLMAP with CUDA for Blackwell (`sm_120`, arch-89 workaround) and run the dense MVS — required for Track 2. |
+| `tests/test_run_m3c2.py` | Change detection | End-to-end test of `run_m3c2.py` against a synthetic ground-truth scene (known box/hole, known misalignment, known junk cluster). |
+| `docs/BUILD_COLMAP_CUDA.md` | Build guide | Build COLMAP with CUDA for Blackwell (`sm_120`, arch-89 workaround) and run the dense MVS — required for Track 2. |
 
 Third-party components (COLMAP, the Inria 3DGS code) are **not** vendored here — they are
 installed/built separately as described below.
@@ -79,7 +79,7 @@ installed/built separately as described below.
 - CUDA Toolkit 12.8, NVIDIA driver supporting CUDA ≥ 12.8
 - Python 3.12, PyTorch built for CUDA 12.8 (`cu128`)
 - [COLMAP](https://colmap.github.io) ≥ 3.7 — CUDA build **required for Track 2** dense MVS
-  (Blackwell needs an arch-89 build; see `BUILD_COLMAP_CUDA.md`), optional for Track 1
+  (Blackwell needs an arch-89 build; see `docs/BUILD_COLMAP_CUDA.md`), optional for Track 1
 
 **Python packages:** `numpy`, `scipy`, `opencv-python`, `pyproj`, `rasterio`, `plyfile`
 (the last four for the georeferencing scripts; `scipy` is used by `georef_cloud.py`).
@@ -103,7 +103,7 @@ Each stage writes into a per-segment working directory (`seg01/` in the examples
 python3 calibrate_camera.py --video calib.mp4 --out ./calib_out
 ```
 
-Print `GoPro_Calibration.pdf` (a 9×6 ChArUco board, `DICT_4X4_50`) and film it while moving the
+Print `assets/GoPro_Calibration.pdf` (a 9×6 ChArUco board, `DICT_4X4_50`) and film it while moving the
 camera through varied angles and distances; the script's `--cols 9 --rows 6` defaults match this
 board.
 
@@ -199,7 +199,7 @@ Dense MVS (`patch_match_stereo`) is CUDA-only. On Blackwell GPUs, COLMAP must be
 with `-DCMAKE_CUDA_ARCHITECTURES=89` (**not** 120) — arch 120 miscompiles the PatchMatch
 kernels and silently yields empty depth maps (0 fused points). The full build (with the
 GCC-13 source patches) and the exact `image_undistorter` → `patch_match_stereo` →
-`stereo_fusion` commands are in [`BUILD_COLMAP_CUDA.md`](BUILD_COLMAP_CUDA.md).
+`stereo_fusion` commands are in [`docs/BUILD_COLMAP_CUDA.md`](docs/BUILD_COLMAP_CUDA.md).
 
 ### Reconstruction contract (identical for both epochs)
 
@@ -314,7 +314,7 @@ A few hard-won, hardware-specific findings, documented for reproducibility:
   built for arch 120, silently produces noise depth maps / 0 fused points on RTX 50xx (a
   known codegen bug). Build COLMAP with `-DCMAKE_CUDA_ARCHITECTURES=89` so the kernels run
   via PTX-JIT to `sm_120`, and add `#include <memory>` to `src/colmap/image/line.cc` and
-  `src/colmap/mvs/workspace.h` for GCC 13. Full guide: `BUILD_COLMAP_CUDA.md`.
+  `src/colmap/mvs/workspace.h` for GCC 13. Full guide: `docs/BUILD_COLMAP_CUDA.md`.
 - **VRAM:** on 12 GB, train with `--data_device cpu` so source images stay in system RAM;
   drop to `-r 2` if you still hit out-of-memory during densification.
 

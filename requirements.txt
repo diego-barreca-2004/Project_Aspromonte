@@ -1,0 +1,10 @@
+# Core dependencies of the pipeline scripts (tested versions in requirements-frozen.txt).
+# COLMAP and the Inria 3D Gaussian Splatting code are installed separately (see README).
+numpy>=2.0
+scipy>=1.14
+opencv-python>=4.10
+pyproj>=3.6
+rasterio>=1.4
+plyfile>=1.1
+py4dgeo>=1.2
+matplotlib>=3.9

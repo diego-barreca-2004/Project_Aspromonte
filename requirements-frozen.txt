@@ -1,3 +1,6 @@
+# Exact environment used for the reference runs (Python 3.12, CUDA 12.8, RTX 5070 Ti).
+# The three 3DGS CUDA extensions below are built from the Inria gaussian-splatting
+# submodules (see README) and are therefore not installable from PyPI.
 affine==2.4.0
 attrs==26.1.0
 certifi==2026.6.17
@@ -11,11 +14,11 @@ cuda-pathfinder==1.2.2
 cuda-toolkit==12.8.1
 cycler==0.12.1
 dateparser==1.4.1
-diff_gaussian_rasterization @ file:///home/diebarr/Progetto_Aspromonte/gaussian-splatting/submodules/diff-gaussian-rasterization
+# diff_gaussian_rasterization  (built from gaussian-splatting/submodules)
 filelock==3.29.0
 fonttools==4.63.0
 fsspec==2026.4.0
-fused_ssim @ file:///home/diebarr/Progetto_Aspromonte/gaussian-splatting/submodules/fused-ssim
+# fused_ssim  (built from gaussian-splatting/submodules)
 idna==3.18
 Jinja2==3.1.6
 joblib==1.5.3
@@ -65,7 +68,7 @@ scikit-learn==1.9.0
 scipy==1.18.0
 seaborn==0.13.2
 setuptools==70.2.0
-simple_knn @ file:///home/diebarr/Progetto_Aspromonte/gaussian-splatting/submodules/simple-knn
+# simple_knn  (built from gaussian-splatting/submodules)
 six==1.17.0
 sympy==1.14.0
 threadpoolctl==3.6.0

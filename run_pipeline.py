@@ -36,10 +36,8 @@ Usage:
   python3 run_pipeline.py --config pipeline.conf --video ep2.mp4 --workdir seg01_ep2 --from dense
 """
 import argparse
-import glob
 import os
 import re
-import shutil
 import struct
 import subprocess
 import sys
@@ -318,7 +316,7 @@ def stage_dense(cfg, p, args):
     if npts < cfg_i(cfg, "min_dense_points"):
         halt("dense", f"only {npts} fused points (need >= {cfg['min_dense_points']}). On "
                       "Blackwell this is the arch-120 codegen bug - rebuild COLMAP with "
-                      "-DCMAKE_CUDA_ARCHITECTURES=89 (see BUILD_COLMAP_CUDA.md).")
+                      "-DCMAKE_CUDA_ARCHITECTURES=89 (see docs/BUILD_COLMAP_CUDA.md).")
     print(f"  gate dense OK: {npts} fused points.")
 
 
