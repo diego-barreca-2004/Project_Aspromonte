@@ -1,5 +1,6 @@
 # Core dependencies of the pipeline scripts (tested versions in requirements-frozen.txt).
 # COLMAP and the Inria 3D Gaussian Splatting code are installed separately (see README).
+# compare_mappers.py and the gravity priors also need pycolmap>=4.2 (CPU wheel is enough).
 numpy>=2.0
 scipy>=1.14
 opencv-python>=4.10
