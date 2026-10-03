@@ -214,6 +214,11 @@ def main(argv=None):
     ap.add_argument("--core-spacing", type=float, default=0.10, help="core-point voxel spacing [m]")
     ap.add_argument("--reg-error", type=float, default=0.0,
                     help="registration error folded into the LoD (2nd pass; measure it first)")
+    ap.add_argument("--min-lod", type=float, default=0.0,
+                    help="floor on the level of detection [m]: a distance is significant only "
+                         "if |d| > max(LoD95, min-lod). MVS noise is spatially correlated, so "
+                         "the per-point LoD95 underestimates it; set this from an epoch-zero-"
+                         "zero test or stable ground (e.g. 4 x NMAD). Default 0 = LoD95 only")
     ap.add_argument("--crop-cell", type=float, default=1.0, help="footprint-crop grid cell [m]")
     ap.add_argument("--crop-dilate", type=int, default=2, help="footprint dilation [cells]")
     ap.add_argument("--no-crop", action="store_true", help="skip the mutual-footprint crop")
@@ -402,10 +407,12 @@ def main(argv=None):
     )
     t1 = time.time()
     dist, unc = m3c2.run()
-    lod = unc["lodetection"]
+    lod = np.maximum(unc["lodetection"], args.min_lod)
     valid = np.isfinite(dist)
     sig = np.zeros(len(dist), bool)
     sig[valid] = np.abs(dist[valid]) > lod[valid]
+    if args.min_lod > 0:
+        log(f"  LoD floor (--min-lod) = {args.min_lod} m")
     log(f"  computed in {time.time() - t1:.1f} s")
     log(f"  valid distances: {valid.sum():,} / {len(dist):,} ({100 * valid.mean():.1f}%)")
     if valid.mean() < 0.5:

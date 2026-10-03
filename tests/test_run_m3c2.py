@@ -208,6 +208,18 @@ def main():
     ok("background significance collapses",
        s2[0]["sig_frac"] < 0.05 and s2[1]["sig_frac"] < 0.05)
 
+    out2b = os.path.join(T, "out_pass2b")
+    stdout2b = run_cli(out2b, ["--min-lod", "0.15"])
+    s2b = read_stats(out2b)
+    sig2b = int(re.search(r"significant: ([\d,]+)", stdout2b).group(1).replace(",", ""))
+    print("== assertions, pass 2b (LoD floor 0.15 m) ==")
+    ok("LoD floor is reported", "LoD floor (--min-lod) = 0.15 m" in stdout2b)
+    ok("LoD floor shrinks the significant set", sig2b < sig1, f"({sig1:,} -> {sig2b:,})")
+    ok("box (+0.30) survives the 0.15 m floor", s2b[2]["sig_frac"] > 0.7)
+    ok("hole (-0.20) survives the 0.15 m floor", s2b[3]["sig_frac"] > 0.7)
+    ok("background is never significant under the floor",
+       s2b[0]["sig_frac"] < 0.01 and s2b[1]["sig_frac"] < 0.01)
+
     out3 = os.path.join(T, "out_auto")
     stdout3 = run_cli_auto(out3)
     s3 = read_stats(out3)
