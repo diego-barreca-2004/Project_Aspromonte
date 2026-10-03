@@ -96,6 +96,8 @@ drift, and grassy edges. Next steps: full-resolution MVS inside the corridor, pi
 
 ![DSM difference ep3 - ep2](../assets/change_map.png)
 
+The figure is drawn by `scripts/change_map_figure.py` (command in its docstring).
+
 ## Designing a controlled change
 
 Measure the noise floor first, on two captures of the unchanged scene. A test object should

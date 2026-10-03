@@ -22,6 +22,7 @@ detection (Track 2, [CHANGE_DETECTION.md](CHANGE_DETECTION.md)).
 | `dsm_change.py` | Change detection | Compact-object detection by DSM differencing on bare ground inside the trail corridor. |
 | `run_pipeline.py`, `pipeline.conf` | Orchestration | One command per epoch, with QC gates and a shared reconstruction contract. |
 | `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py` and the gravity-levelled georeferencing. |
+| `scripts/` | Reports and figures | `mapper_report.py` and `bend_check.py` aggregate the SfM comparison; `change_map_figure.py` and `render_cloud_gif.py` draw the README figures. |
 
 COLMAP and the Inria 3DGS code are not vendored; they are installed separately
 ([ENVIRONMENT.md](ENVIRONMENT.md)).

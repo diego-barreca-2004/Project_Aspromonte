@@ -41,13 +41,17 @@ point-to-plane ICP of one epoch's georeferenced sparse points onto another's, co
 fine (correspondence gate 20, 5, 2, 1, 0.5 m), since GPS-only georeferencings of different
 days can be several metres apart. On a moved copy of a real cloud (5° rotation, 6.2 m
 offset) it recovers both exactly. As a cross-check, the relative rotation is also computed
-from the two per-epoch DTM-ICP rotations. The aggregation script is outside the
-repository.
+from the two per-epoch DTM-ICP rotations.
 
 ```bash
 python3 compare_mappers.py --epoch ./seg01_ep2 --video Attempt_2.MP4 \
     --calibration ./calib_out/calibration_fisheye.json \
     --dtm aspromonte_dtm_utm33n.tif --out ./sfm_compare/seg01_ep2
+# after all epochs: tables and inter-epoch rotations (summary.md, summary.json)
+python3 scripts/mapper_report.py --root . --epochs seg01 seg01_ep2 seg01_ep3
+# where along the sequence a model disagrees with the GoPro gravity
+python3 scripts/bend_check.py --epoch ./seg01 --video Attempt.MP4 \
+    --models ./sfm_compare/seg01
 ```
 
 ## Results
