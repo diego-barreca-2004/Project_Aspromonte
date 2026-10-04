@@ -57,3 +57,12 @@ dsm_*/
 icp_*.txt
 testdata/
 testdata_dsm/
+
+# --- Local working folders next to the code (data, mapper comparison, analysis scratch,
+#     patched 3DGS copy, local data index) ---
+/raw/
+/change_detection/
+/sfm_compare/
+/analisi/
+/gs-hires/
+/DATA.md
