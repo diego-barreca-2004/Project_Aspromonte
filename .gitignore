@@ -20,6 +20,9 @@ Thumbs.db
 colmap/
 # Inria 3D Gaussian Splatting
 gaussian-splatting/
+# Other local builds (e.g. COLMAP 4.2, VidMap) and their Python environments
+third_party/
+envs/
 
 # --- Per-segment working data (frames, COLMAP db/models, 3DGS output, gps.csv) ---
 seg*/
