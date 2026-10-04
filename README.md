@@ -76,7 +76,8 @@ python3 -m venv venv && venv/bin/pip install -r requirements.txt
 - The [Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting) code, cloned into
   `gaussian-splatting/`, for Track 1 only.
 - ExifTool ≥ 13.0 for the GPS9 and GRAV telemetry streams.
-- `pycolmap>=4.2` (CPU wheel) for `compare_mappers.py`.
+- `pycolmap>=4.2` (CPU wheel) for `compare_mappers.py`, `scripts/mapper_report.py` and
+  `scripts/bend_check.py`.
 
 Tested on WSL2 (Ubuntu), RTX 5070 Ti Laptop (12 GB), CUDA 12.8, Python 3.12. Capture
 settings and environment notes: [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).

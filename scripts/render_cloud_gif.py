@@ -72,6 +72,7 @@ def main():
     ap.add_argument('--colors', type=int, default=192)
     ap.add_argument('--track', help='GPS csv (lat, lon): keep points near the walked path')
     ap.add_argument('--max-track-dist', type=float, default=15.0, help='[m], horizontal')
+    ap.add_argument('--epsg', type=int, default=32633, help='UTM EPSG of the cloud (default 32633)')
     ap.add_argument('--drop-sky', action='store_true', help='drop sky-coloured outliers')
     args = ap.parse_args()
 
@@ -80,7 +81,7 @@ def main():
     rgb = np.stack([v['red'], v['green'], v['blue']], 1).astype(np.uint8)
     if args.track:
         rows = np.genfromtxt(args.track, delimiter=',', names=True)
-        tr = Transformer.from_crs(4326, 32633, always_xy=True)
+        tr = Transformer.from_crs(4326, args.epsg, always_xy=True)
         T = np.stack(tr.transform(rows['lon'], rows['lat']), 1)
         d, _ = cKDTree(T).query(P[:, :2])
         P, rgb = P[d < args.max_track_dist], rgb[d < args.max_track_dist]

@@ -158,7 +158,7 @@ def main():
         a.set_xlabel('E [m]')
         if k == 0:
             a.set_ylabel('N [m]')
-            title += (f": +{float(det['dz_median']) * 100:.0f} cm, "
+            title += (f": {float(det['dz_median']) * 100:+.0f} cm, "
                       f"{float(det['area_m2']):.2f} m$^2$")
         a.set_title(title, fontsize=9.5)
     fig.colorbar(im, ax=fig.axes, shrink=0.85, pad=0.02,
