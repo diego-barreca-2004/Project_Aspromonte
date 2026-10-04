@@ -4,8 +4,9 @@ Action-camera video of a mountain trail, turned into a georeferenced 3D Gaussian
 model and into change maps between repeated passes, in UTM coordinates.
 
 <p align="center">
-  <img src="assets/splat_flythrough.gif" width="80%" alt="Fly-through of the georeferenced 3DGS model of epoch 2">
-  <br><em>3DGS model of the second pass, rendered along the walked path.</em>
+  <img src="assets/splat_segment_render.jpg" width="80%" alt="Render of the 3DGS model of a 30 m stretch of the trail">
+  <br><em>Rendered from the 3DGS model at one of its training camera poses
+  (30 m stretch of the second pass, 121 frames at 3200 px).</em>
 </p>
 
 A GoPro HERO13 was walked three times along the same 152 m trail in the Aspromonte massif
@@ -114,6 +115,13 @@ On a near-straight walk GPS does not constrain the roll about the direction of t
 fixing the vertical with the GoPro gravity removes most of the tilt between passes, at
 the cost of a larger GPS residual. Details: [docs/SFM_COMPARISON.md](docs/SFM_COMPARISON.md).
 
+### 3D Gaussian Splatting
+
+<p align="center">
+  <img src="assets/splat_flythrough.gif" width="80%" alt="Fly-through of the georeferenced 3DGS model of epoch 2">
+  <br><em>3DGS model of the whole second pass, rendered along the walked path.</em>
+</p>
+
 ### Change detection
 
 On bare ground the DSM difference between two passes has a noise level (NMAD) of 1.3 cm
@@ -144,6 +152,9 @@ yields 48. Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
   along the sequence; most false positives come from the ends of the sequence and from a
   stretch with non-rigid drift.
 - **Small objects.** Thin, dark or glossy objects are missed at `max_image_size` 1000.
+- **Splat views off the walked path.** A forward walk constrains the 3DGS model only near
+  the camera path: renders from the walked path are sharp, while viewpoints away from it
+  show floaters and a smeared background.
 - **Licensing of Track 1.** The Inria 3DGS code is non-commercial; see below.
 
 ## License
