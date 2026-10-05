@@ -62,10 +62,11 @@ testdata/
 testdata_dsm/
 
 # --- Local working folders next to the code (data, mapper comparison, analysis scratch,
-#     patched 3DGS copy, local data index) ---
+#     patched 3DGS copy, LiDAR coverage of new filming spots, local data index) ---
 /raw/
 /change_detection/
 /sfm_compare/
 /analisi/
 /gs-hires/
+/reggio_lidar_coverage/
 /DATA.md
