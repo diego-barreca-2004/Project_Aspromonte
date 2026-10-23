@@ -359,16 +359,22 @@ def main(argv=None):
     dz = h_cmp - h_ref
     offset = float(np.median(dz[valid]))
     dz = dz - offset
-    smooth = ndimage.uniform_filter(np.where(np.isfinite(h_ref), h_ref, 0), 3)
-    wts = ndimage.uniform_filter(np.isfinite(h_ref).astype(float), 3)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        rough = np.abs(h_ref - smooth / wts)
-    sx, sy = np.gradient(np.where(np.isfinite(h_ref), h_ref, np.nanmedian(h_ref)), args.cell)
-    names = ["points (min)", "spread (max) m", "views (min)", "ray spread (min) deg", "roughness m",
-             "slope", "track dist m"]
-    X = np.column_stack([np.minimum(n_ref, n_cmp)[valid], np.maximum(s_ref, s_cmp)[valid],
+    # Surface predictors (spread, roughness, slope) are taken as the minimum over the two
+    # passes: the condition both share. With the maximum, an object's own walls raise the
+    # spread of the pass that holds it, its sigma follows, and the object hides itself (on
+    # ep3/ep2 the bucket had dz +0.25-0.30 m, spread 0.25-0.32 m and sigma 0.30-0.44 m).
+    def rough_slope(h):
+        smooth = ndimage.uniform_filter(np.where(np.isfinite(h), h, 0), 3)
+        wts = ndimage.uniform_filter(np.isfinite(h).astype(float), 3)
+        sx, sy = np.gradient(np.where(np.isfinite(h), h, np.nanmedian(h)), args.cell)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.abs(h - smooth / wts), np.hypot(sx, sy)
+    (r_ref, g_ref), (r_cmp, g_cmp) = rough_slope(h_ref), rough_slope(h_cmp)
+    names = ["points (min)", "spread (min) m", "views (min)", "ray spread (min) deg", "roughness (min) m",
+             "slope (min)", "track dist m"]
+    X = np.column_stack([np.minimum(n_ref, n_cmp)[valid], np.minimum(s_ref, s_cmp)[valid],
                          np.minimum(w_ref, w_cmp)[valid], np.minimum(ray["ref"], ray["cmp"])[valid],
-                         rough[valid], np.hypot(sx, sy)[valid],
+                         np.minimum(r_ref, r_cmp)[valid], np.minimum(g_ref, g_cmp)[valid],
                          ttree.query(np.c_[gx[valid], gy[valid]])[0]])
     X = np.where(np.isfinite(X), X, np.nanmedian(X, axis=0))
     model = fit_sigma(dz[valid], X, names)
