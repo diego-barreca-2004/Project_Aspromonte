@@ -14,7 +14,11 @@ evaluated length) and any of:
                limit, e.g. the plasterboard in ep2 vs ep1).
 
 A candidate whose centre lies within --match-radius of an object belongs to that object;
-every other candidate outside the excluded zones is a false alarm. Reported:
+every other candidate outside the excluded zones is a false alarm. With --null-candidates
+(the same detector on the same pair without inserted objects), a candidate that was already
+there (same kind, centre within --match-radius) stays a false alarm even next to an object:
+otherwise noise blobs that happen to lie near an inserted object inflate the recall.
+Reported:
 
   - false alarms per km and per 100 m, and the Poisson probability of at least that many
     when the expected rate is --epsilon per km (criterion C1);
@@ -74,12 +78,15 @@ def track_length(path, epsg, trim_ends):
     return float(np.hypot(*np.diff(tp, axis=0).T).sum())
 
 
-def score(cands, objs, zones, radius):
+def score(cands, objs, zones, radius, null=()):
     """Per candidate: the object it belongs to (or None) and whether it is a false alarm."""
     labels, false = [], []
     for c in cands:
         xy = np.array([c["E"], c["N"]])
-        near = [lab for lab, o in objs.items() if np.hypot(*(xy - o["xy"])) <= radius]
+        old = any(n["kind"] == c["kind"] and np.hypot(n["E"] - c["E"], n["N"] - c["N"]) <= radius
+                  for n in null)
+        near = [] if old else [lab for lab, o in objs.items()
+                               if np.hypot(*(xy - o["xy"])) <= radius]
         labels.append(near[0] if near else None)
         excluded = any(np.hypot(c["E"] - e, c["N"] - n) <= r for e, n, r in zones)
         false.append(not near and not excluded)
@@ -125,6 +132,8 @@ def main(argv=None):
     ap.add_argument("--icp", help="CloudCompare matrix of the run, applied to object positions")
     ap.add_argument("--matrix-index", type=int, default=0)
     ap.add_argument("--cc-shift", nargs=3, type=float, metavar=("SX", "SY", "SZ"))
+    ap.add_argument("--null-candidates",
+                    help="candidates CSV of the same detector without inserted objects")
     ap.add_argument("--exclude", nargs=3, type=float, action="append", default=[],
                     metavar=("E", "N", "R"), help="zone left out of the false-alarm count")
     ap.add_argument("--match-radius", type=float, default=0.5,
@@ -152,7 +161,8 @@ def main(argv=None):
         sys.exit("--gt and --synthetic share labels: rename the synthetic objects.")
     objs = {**real, **synth}
     km = track_length(args.track, args.track_epsg, args.trim_ends) / 1000.0
-    labels, false = score(cands, objs, args.exclude, args.match_radius)
+    null = load_candidates(args.null_candidates) if args.null_candidates else ()
+    labels, false = score(cands, objs, args.exclude, args.match_radius, null)
 
     from scipy.stats import poisson
     n_false, mu = int(false.sum()), args.epsilon * km

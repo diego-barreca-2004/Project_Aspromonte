@@ -7,6 +7,8 @@ synthetic object, one excluded zone, and five candidates ranked by a score colum
   - one on the synthetic object                      -> no false alarm, rank 3
   - one in the excluded zone                         -> no false alarm
   - one elsewhere                                    -> the only false alarm
+With a null run that already holds the candidate on the real object, that candidate becomes
+a false alarm and the object is missed.
 
 Run:  python3 tests/test_cd_eval.py
 """
@@ -47,6 +49,10 @@ def build_fixture():
         w.writerow(["kind", "E", "N", "dz_peak", "score"])
         for kind, x, y, dz, s in rows:
             w.writerow([kind, E0 + x, N0 + y, dz, s])
+    with open(os.path.join(T, "null.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["kind", "E", "N"])
+        w.writerow(["appeared", E0 + 50.25, N0 + 0.1])
 
 
 def main():
@@ -60,6 +66,7 @@ def main():
             "--exclude", str(E0 + 160), str(N0), "1"]
     hidden = cd_eval.main(base)
     shown = cd_eval.main(base + ["--reveal-objects", "--out", os.path.join(T, "out.json")])
+    nulled = cd_eval.main(base + ["--reveal-objects", "--null-candidates", os.path.join(T, "null.csv")])
 
     checks = []
 
@@ -78,6 +85,8 @@ def main():
     ok("height 0.29 m inside 0.265-0.278 +/- 0.03", b["height_ok"] is True)
     ok("FROC reaches recall 1 with one false alarm",
        shown["froc"][-1][1] == 1.0 and abs(shown["froc"][-1][0] - 5) < 0.05)
+    ok("null run: pre-existing candidate is a false alarm", nulled["false_alarms"] == 2)
+    ok("null run: object reached only by it is missed", nulled["objects"]["bucket"]["rank"] is None)
     ok("metrics JSON written", os.path.isfile(os.path.join(T, "out.json")))
 
     n_ok = sum(c for _, c in checks)
