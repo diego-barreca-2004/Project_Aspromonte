@@ -9,7 +9,8 @@ Checks:
     biases of the two days average out instead of moving one pass against the other;
   - strip_prefix drops the pass label from the image names and leaves poses and 2D points
     byte-identical;
-  - camera_track (measure_change.py) returns the pass's camera centres in UTM, in frame order.
+  - camera_track (measure_change.py) returns the pass's camera centres in UTM, in frame order,
+    without a misregistered camera placed 60 m off the walk.
 
 Run:  python3 tests/test_coalign.py
 """
@@ -140,11 +141,14 @@ def main():
     dense = os.path.join(seg, "colmap", "dense", "sparse")
     os.makedirs(dense)
     shuffled = [ep3[i] for i in rng.permutation(len(ep3))]
+    q, tv = ep3[50][1], ep3[50][2]                       # a misregistered camera, 60 m off the walk
+    shuffled.append(("ep3/frame_000050_t00020.10.jpg", q, tv + qvec2rotmat(q) @ np.array([60 / s_true, 0, 0]),
+                     ep3[50][3]))
     write_images_bin(os.path.join(dense, "images.bin"), [(n[4:], q, tv, p) for n, q, tv, p in shuffled])
     shutil.copyfile(geo, os.path.join(seg, "colmap", "geo_transform.txt"))
     track = camera_track(seg)
-    ok("one vertex per camera, in frame order", len(track) == len(ep3)
-       and np.allclose(track, mapped["ep3"][:, :2]))
+    ok("one vertex per camera, in frame order, misregistered camera dropped", len(track) == len(ep3)
+       and np.allclose(track, mapped["ep3"][:, :2]), f"({len(track)} of {len(shuffled)})")
 
     n_ok = sum(c for _, c in checks)
     print(f"\n{n_ok}/{len(checks)} checks passed.")

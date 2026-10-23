@@ -43,6 +43,7 @@ noise_model.json, change_report.txt, change_map.png.
 """
 import argparse
 import csv
+import hashlib
 import json
 import os
 import struct
@@ -90,10 +91,15 @@ def read_pinhole_model(model_dir):
 
 def camera_track(seg):
     """The pass's camera centres in UTM, in frame order: the track in the frame of its own cloud
-    (the GPS log is a separate sensor, off by up to a metre from the georeferenced model)."""
+    (the GPS log is a separate sensor, off by up to a metre from the georeferenced model).
+    A few misregistered cameras per pass sit tens of metres off the walk (seg01: one at 183 m,
+    which more than tripled the track length); a running median over 11 frames drops them. An
+    outlier moves that median by about one step, so the cut is 5 median steps (~1.2 m)."""
     s, R, t, _ = parse_geo_transform(os.path.join(seg, "colmap", "geo_transform.txt"))
     centres = read_camera_centres(os.path.join(seg, "colmap", "dense", "sparse"))
-    return np.array([s * R @ centres[n] + t for n in sorted(centres)])[:, :2]
+    xy = np.array([s * R @ centres[n] + t for n in sorted(centres)])[:, :2]
+    off = np.hypot(*(xy - ndimage.median_filter(xy, size=(11, 1), mode="nearest")).T)
+    return xy[off < 5 * np.median(np.hypot(*np.diff(xy, axis=0).T))]
 
 
 def read_views(path):
@@ -116,11 +122,16 @@ def load_pass(seg, ply=None, cache=None):
     are matched to the raw fused.ply (georeferenced the same way) to read fused.ply.vis:
     fused_utm.ply is fused.ply after SOR, so the order alone does not match."""
     dense = os.path.join(seg, "colmap", "dense")
-    v = PlyData.read(ply or os.path.join(dense, "fused_utm.ply"))["vertex"]
+    src = ply or os.path.join(dense, "fused_utm.ply")
+    v = PlyData.read(src)["vertex"]
     xyz = np.column_stack([v["x"], v["y"], v["z"]]).astype(np.float64)
     if "views" in v.data.dtype.names:
         return xyz, np.asarray(v["views"], np.float64)
-    key = os.path.join(cache, os.path.basename(os.path.normpath(seg)) + "_views.npy") if cache else None
+    key = None
+    if cache:  # keyed by the cloud's path, size and time: two passes may share a folder name
+        st = os.stat(src)
+        tag = hashlib.sha1(f"{os.path.abspath(src)}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:12]
+        key = os.path.join(cache, f"{os.path.basename(os.path.normpath(seg))}_{tag}_views.npy")
     if key and os.path.isfile(key):
         views = np.load(key)
         if len(views) == len(xyz):
@@ -392,6 +403,15 @@ def main(argv=None):
     z = dz / sigma
     log(f"\n=== noise model ===\n  median offset removed: {offset:+.4f} m | NMAD dz: {nmad(dz[valid]):.4f} m "
         f"| sigma per cell P10/P50/P90: " + "/".join(f"{q:.3f}" for q in np.percentile(sigma[valid], [10, 50, 90])) + " m")
+    # residual deformation between the passes (SfM drift, doming): median dz per 10 m of track
+    along = np.r_[0, np.cumsum(np.hypot(*np.diff(track, axis=0).T))]
+    at = along[ttree.query(np.c_[gx[valid], gy[valid]])[1]]
+    profile = [float(np.median(dz[valid][m])) if (m := (at >= a) & (at < a + 10)).sum() >= 100 else None
+               for a in np.arange(0, along[-1], 10)]
+    flat = [p for p in profile if p is not None]
+    log("  median dz per 10 m of track (residual deformation, flat when the passes agree): "
+        + " ".join("--" if p is None else f"{100 * p:+.1f}" for p in profile)
+        + f" cm | range {100 * (max(flat) - min(flat)):.1f} cm")
     log("  standardisation, NMAD of z per decile of each predictor (should all be ~1):")
     for k, nm in enumerate(names):
         e = np.unique(np.quantile(X[:, k], np.linspace(0, 1, 11)))
@@ -488,7 +508,7 @@ def main(argv=None):
     json.dump(dict(model, offset=offset, variogram=dict(lags=lags.tolist(), gamma=gam.tolist(),
                                                          params=vp.tolist()),
                    contrast_sd={str(k): sd for k, sd, _, _ in stats}, empirical_null=null,
-                   n_tests=n_tests, track_km=km),
+                   n_tests=n_tests, track_km=km, nmad_dz=float(nmad(dz[valid])), dz_profile_10m=profile),
               open(os.path.join(args.out, "noise_model.json"), "w"), indent=1)
     import matplotlib
     matplotlib.use("Agg")
