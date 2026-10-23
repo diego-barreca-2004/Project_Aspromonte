@@ -133,6 +133,53 @@ def robust_umeyama(S, Y, iters=6, k=3.0, min_keep=10):
     return c, R, t, idx
 
 
+def gps_world(gps_path, names, epsg):
+    """CRS position (E, N, altitude) of each frame name, interpolated from gps.csv at the frame
+    time; frames without a time or outside the GPS log are left out."""
+    import numpy as np
+    from pyproj import Transformer
+    t_s, lat, lon, alt = load_gps(gps_path)
+    t0, t1 = float(t_s[0]), float(t_s[-1])
+    project = Transformer.from_crs(4326, epsg, always_xy=True).transform
+    world = {}
+    for name in names:
+        ft = frame_time(os.path.basename(name))
+        if ft is None or ft < t0 - 0.5 or ft > t1 + 0.5:
+            continue
+        e, n = project(float(np.interp(ft, t_s, lon)), float(np.interp(ft, t_s, lat)))
+        world[name] = np.array([e, n, float(np.interp(ft, t_s, alt))])
+    return world
+
+
+def fit_transform(centres, world):
+    """Robust Sim3 from SfM camera centres to their CRS positions (both dicts keyed by name).
+    Returns scale, R, t, the inlier residuals [m] and the number of frames in common."""
+    import numpy as np
+    common = sorted(set(world) & set(centres))
+    if len(common) < 10:
+        sys.exit(f"Only {len(common)} frames matched between GPS and the model - cannot align.")
+    S = np.array([centres[n] for n in common])
+    W = np.array([world[n] for n in common])
+    # robust fit in a locally-centred frame (raw UTM magnitudes would wreck the SVD)
+    origin = np.floor(W.min(0))
+    c, R, t, idx = robust_umeyama(S, W - origin)
+    t = t + origin                                     # back to true CRS coordinates
+    res = np.linalg.norm((c * (R @ S.T).T + t) - W, axis=1)[idx]
+    return c, R, t, res, len(common)
+
+
+def write_transform(path, epsg, c, R, t, res, n_common):
+    """geo_transform.txt: X_world = scale * R @ X_sfm + t."""
+    import numpy as np
+    with open(path, "w") as f:
+        f.write(f"# Sim3  X_world = scale * R @ X_sfm + t   (EPSG:{epsg})\n")
+        f.write(f"# fit: {len(res)}/{n_common} inliers, residual median {np.median(res):.3f} m\n")
+        f.write(f"epsg {epsg}\n")
+        f.write(f"scale {c:.10g}\n")
+        f.write("R " + " ".join(f"{v:.10g}" for v in R.ravel()) + "\n")
+        f.write("t " + " ".join(f"{v:.6f}" for v in t) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Georeference a COLMAP model from GoPro GPS.")
     ap.add_argument("--gps", required=True, help="gps.csv from ingest_gopro.py")
@@ -141,9 +188,7 @@ def main():
     ap.add_argument("--out", default="./geo_transform.txt")
     ap.add_argument("--epsg", type=int, default=32633, help="Target metric CRS (default UTM 33N).")
     args = ap.parse_args()
-
     import numpy as np
-    from pyproj import Transformer
 
     if not os.path.isfile(args.gps):
         sys.exit(f"gps.csv not found: {args.gps}")
@@ -151,47 +196,17 @@ def main():
         sys.exit(f"Image folder not found: {args.images}")
 
     # 1-2) per-frame world coordinates: interpolate GPS at each frame time, project to the CRS.
-    t_s, lat, lon, alt = load_gps(args.gps)
-    t0, t1 = float(t_s[0]), float(t_s[-1])
-    project = Transformer.from_crs(4326, args.epsg, always_xy=True).transform
-    world = {}
-    for name in os.listdir(args.images):
-        if not name.lower().endswith((".jpg", ".jpeg", ".png")):
-            continue
-        ft = frame_time(name)
-        if ft is None or ft < t0 - 0.5 or ft > t1 + 0.5:
-            continue
-        e, n = project(float(np.interp(ft, t_s, lon)), float(np.interp(ft, t_s, lat)))
-        world[name] = np.array([e, n, float(np.interp(ft, t_s, alt))])
-
-    # 3) SfM camera centres from the COLMAP model.
-    centres = read_camera_centres(args.model)
-
-    common = sorted(set(world) & set(centres))
-    if len(common) < 10:
-        sys.exit(f"Only {len(common)} frames matched between GPS and the model - cannot align.")
-    S = np.array([centres[n] for n in common])
-    W = np.array([world[n] for n in common])
-
-    # 4) robust fit in a locally-centred frame (raw UTM magnitudes would wreck the SVD).
-    origin = np.floor(W.min(0))
-    c, R, t, idx = robust_umeyama(S, W - origin)
-    t = t + origin                                     # back to true CRS coordinates
-
-    res = np.linalg.norm((c * (R @ S.T).T + t) - W, axis=1)[idx]
-    print(f"Aligned {len(common)} frames; kept {len(idx)} inliers "
-          f"(rejected {len(common) - len(idx)}).")
+    names = [n for n in os.listdir(args.images) if n.lower().endswith((".jpg", ".jpeg", ".png"))]
+    world = gps_world(args.gps, names, args.epsg)
+    # 3) SfM camera centres from the COLMAP model; 4) robust fit.
+    c, R, t, res, n_common = fit_transform(read_camera_centres(args.model), world)
+    print(f"Aligned {n_common} frames; kept {len(res)} inliers "
+          f"(rejected {n_common - len(res)}).")
     print(f"Residual (inliers): mean {res.mean():.2f}  median {np.median(res):.2f}  "
           f"max {res.max():.2f} m   |   scale {c:.5f}")
 
     # 5) write the transform: X_world = scale * R @ X_sfm + t
-    with open(args.out, "w") as f:
-        f.write(f"# Sim3  X_world = scale * R @ X_sfm + t   (EPSG:{args.epsg})\n")
-        f.write(f"# fit: {len(idx)}/{len(common)} inliers, residual median {np.median(res):.3f} m\n")
-        f.write(f"epsg {args.epsg}\n")
-        f.write(f"scale {c:.10g}\n")
-        f.write("R " + " ".join(f"{v:.10g}" for v in R.ravel()) + "\n")
-        f.write("t " + " ".join(f"{v:.6f}" for v in t) + "\n")
+    write_transform(args.out, args.epsg, c, R, t, res, n_common)
     print(f"\nWrote transform to {args.out}")
     print(f"The reconstruction is now in EPSG:{args.epsg}. Reproject your DTM to the same CRS "
           "(dtm_merge_reproject.py), then apply this transform to the 3DGS .ply and refine with "

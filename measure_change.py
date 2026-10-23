@@ -56,6 +56,7 @@ from scipy.spatial import cKDTree
 from scipy.stats import norm
 
 from dsm_change import grid_stats, read_track
+from geo_align import read_camera_centres
 from georef_cloud import parse_geo_transform
 from run_m3c2 import nmad, parse_cc_matrices
 
@@ -85,6 +86,14 @@ def read_pinhole_model(model_dir):
                           [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
             poses.append((R, np.array([tx, ty, tz]), cams[cid]))
     return poses
+
+
+def camera_track(seg):
+    """The pass's camera centres in UTM, in frame order: the track in the frame of its own cloud
+    (the GPS log is a separate sensor, off by up to a metre from the georeferenced model)."""
+    s, R, t, _ = parse_geo_transform(os.path.join(seg, "colmap", "geo_transform.txt"))
+    centres = read_camera_centres(os.path.join(seg, "colmap", "dense", "sparse"))
+    return np.array([s * R @ centres[n] + t for n in sorted(centres)])[:, :2]
 
 
 def read_views(path):
@@ -289,7 +298,7 @@ def main(argv=None):
     ap.add_argument("--cmp-ply", help="compared cloud (default <cmp-seg>/colmap/dense/fused_utm.ply)")
     ap.add_argument("--icp", help="CloudCompare matrix, cmp to ref (none after co-alignment)")
     ap.add_argument("--cc-shift", nargs=3, type=float, metavar=("SX", "SY", "SZ"))
-    ap.add_argument("--track", help="gps.csv of the reference pass (default <ref-seg>/gps.csv)")
+    ap.add_argument("--track", help="gps.csv for the track (default: the reference pass's camera centres)")
     ap.add_argument("--epsilon", type=float, default=1.0,
                     help="expected false change statements per km of track")
     ap.add_argument("--max-range", type=float, default=6.0,
@@ -317,7 +326,7 @@ def main(argv=None):
     shift = np.array(args.cc_shift or [0, 0, 0], float)
 
     # --- clouds, restricted to max-range of the track ---
-    track = read_track([args.track or os.path.join(args.ref_seg, "gps.csv")], 32633)
+    track = read_track([args.track], 32633) if args.track else camera_track(args.ref_seg)
     km = float(np.hypot(*np.diff(track, axis=0).T).sum()) / 1000
     ttree = cKDTree(track)
     ref, v_ref = load_pass(args.ref_seg, args.ref_ply, args.cache)
