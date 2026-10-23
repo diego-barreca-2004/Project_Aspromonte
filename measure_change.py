@@ -9,8 +9,9 @@ and ranks blobs by area x |dz|. Here:
      the poses (dense/sparse of each pass), instead of a fixed corridor;
   2. DSM per pass (height percentile per cell), dz = cmp - ref, median offset removed;
   3. noise per cell (Hugonnet et al. 2022): robust model of log|dz| as a sum of binned
-     functions of point counts, height spread, views per point (fused.ply.vis), local
-     roughness, slope and track distance, calibrated so that NMAD(dz / sigma) = 1;
+     functions of point counts, height spread, views per point (fused.ply.vis), angular
+     spread of the camera rays (small at the track ends), local roughness, slope and track
+     distance, calibrated so that NMAD(dz / sigma) = 1;
   4. heavy tails: z = dz / sigma is not Gaussian (branches over the trail, floaters and mixed
      cells give |z| of tens or hundreds), and one such cell would decide a whole window mean.
      So z goes through the empirical distribution of the pair itself to normal scores,
@@ -24,7 +25,11 @@ and ranks blobs by area x |dz|. Here:
      weights sum to zero, so Var(C) follows from the variogram alone even when the residual
      drift makes the field non-stationary (intrinsic random functions, Matheron): no drift is
      subtracted from the data, and a compact change is judged against its own surroundings.
-     T = C / sd(C), NFA = N_tests * P(N(0,1) >= T). A change is stated where
+     T = C / sd(C). On N1 one variogram does not fit every surface: the NMAD of T grows
+     from 0.9 on smooth ground to 1.8 in vegetation at 0.1 m, and windows with missing cells
+     have heavier tails. So T is re-centred and re-scaled by its median and NMAD within
+     classes of window sigma (quintiles) and fill (empirical null, Efron 2004).
+     NFA = N_tests * P(N(0,1) >= T). A change is stated where
      NFA < --epsilon * track km, so --epsilon is the expected number of false statements per
      km. Significant windows of one sign merge into one change; rank by -log10 NFA.
 
@@ -147,7 +152,9 @@ def cell_mean(pts, val, origin, cell, shape):
 
 def visibility(cx, cy, cz, seg, M, shift, max_range):
     """Number of cameras of a pass that see each cell centre (in front, inside the image,
-    within max_range metres). Cells are in the reference UTM frame."""
+    within max_range metres), and the angular spread of their rays in degrees,
+    sqrt(2 (1 - |mean unit ray|)): small where all cameras look from one side, as at the ends
+    of the track, so depth is poorly triangulated. Cells are in the reference UTM frame."""
     s, R, t, _ = parse_geo_transform(os.path.join(seg, "colmap", "geo_transform.txt"))
     poses = read_pinhole_model(os.path.join(seg, "colmap", "dense", "sparse"))
     P = to_frame(np.c_[cx, cy, cz], M, shift, inverse=True)  # into the pass's UTM frame
@@ -155,6 +162,7 @@ def visibility(cx, cy, cz, seg, M, shift, max_range):
     centres = np.array([-Rc.T @ tc for Rc, tc, _ in poses])
     tree = cKDTree(P[:, :2])
     count = np.zeros(len(P), np.int32)
+    rays = np.zeros((len(P), 3))
     for (Rc, tc, (w, h, (fx, fy, px, py))), c in zip(poses, centres):
         cu = s * c @ R.T + t
         idx = np.array(tree.query_ball_point(cu[:2], max_range), np.int64)
@@ -164,9 +172,15 @@ def visibility(cx, cy, cz, seg, M, shift, max_range):
         front = X[:, 2] > 0
         u = fx * X[:, 0] / np.where(front, X[:, 2], 1) + px
         v = fy * X[:, 1] / np.where(front, X[:, 2], 1) + py
-        near = np.linalg.norm(P[idx] - cu, axis=1) <= max_range
-        count[idx[front & near & (u >= 0) & (u < w) & (v >= 0) & (v < h)]] += 1
-    return count
+        d = P[idx] - cu
+        rng = np.linalg.norm(d, axis=1)
+        seen = front & (rng <= max_range) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        count[idx[seen]] += 1
+        rays[idx[seen]] += d[seen] / rng[seen, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        r = np.linalg.norm(rays, axis=1) / count
+    spread = np.degrees(np.sqrt(2 * np.clip(1 - r, 0, None)))
+    return count, np.where(count >= 2, spread, 0.0)
 
 
 # --- noise model ----------------------------------------------------------------
@@ -244,6 +258,28 @@ def contrast_sd(k, cell, p):
     return float(np.sqrt(-np.sum(R * g)))
 
 
+def empirical_null(T, ok, wsig, full, n_strata=5, min_n=1000):
+    """Empirical null by central matching (Efron 2004), per class of window sigma (quintiles)
+    and fill (window and ring complete or not): T -> (T - median) / NMAD within each class.
+    One variogram cannot hold for both smooth ground (neighbouring cells strongly correlated)
+    and vegetation (nearly independent cells), nor for windows with missing cells; changes are
+    rare, so the median and NMAD of each class describe its null. Returns T and the classes."""
+    out = np.zeros_like(T)
+    edges = np.quantile(wsig[ok], np.linspace(0, 1, n_strata + 1))
+    cls = np.clip(np.searchsorted(edges, wsig, side="right") - 1, 0, n_strata - 1) * 2 + full
+    pooled = (float(np.median(T[ok])), float(nmad(T[ok])))
+    rows = []
+    for c in range(2 * n_strata):
+        m = ok & (cls == c)
+        if not m.any():
+            continue
+        loc, sc = (float(np.median(T[m])), float(nmad(T[m]))) if m.sum() >= min_n else pooled
+        out[m] = (T[m] - loc) / sc
+        rows.append(dict(sigma=[float(edges[c // 2]), float(edges[c // 2 + 1])], full=bool(c % 2),
+                         n=int(m.sum()), loc=loc, scale=sc))
+    return out, rows
+
+
 # --- main -----------------------------------------------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Per-cell noise model and a-contrario change measurement.")
@@ -307,11 +343,11 @@ def main(argv=None):
     # --- analysis area: cells seen by >= 2 cameras of each pass ---
     hz = np.where(np.isfinite(h_ref), h_ref, h_cmp)
     data = np.isfinite(hz)
-    seen = {}
+    seen, ray = {}, {}
     for name, seg, m in (("ref", args.ref_seg, None), ("cmp", args.cmp_seg, M)):
-        cnt = np.zeros(shape, np.int32)
-        cnt[data] = visibility(gx[data], gy[data], hz[data], seg, m, shift, args.max_range)
-        seen[name] = cnt
+        cnt, spr = np.zeros(shape, np.int32), np.zeros(shape)
+        cnt[data], spr[data] = visibility(gx[data], gy[data], hz[data], seg, m, shift, args.max_range)
+        seen[name], ray[name] = cnt, spr
     observed = (seen["ref"] >= 2) & (seen["cmp"] >= 2)
     valid = observed & np.isfinite(h_ref) & np.isfinite(h_cmp)
     empty_one = observed & (np.isfinite(h_ref) != np.isfinite(h_cmp))
@@ -328,10 +364,12 @@ def main(argv=None):
     with np.errstate(invalid="ignore", divide="ignore"):
         rough = np.abs(h_ref - smooth / wts)
     sx, sy = np.gradient(np.where(np.isfinite(h_ref), h_ref, np.nanmedian(h_ref)), args.cell)
-    names = ["points (min)", "spread (max) m", "views (min)", "roughness m", "slope", "track dist m"]
+    names = ["points (min)", "spread (max) m", "views (min)", "ray spread (min) deg", "roughness m",
+             "slope", "track dist m"]
     X = np.column_stack([np.minimum(n_ref, n_cmp)[valid], np.maximum(s_ref, s_cmp)[valid],
-                         np.minimum(w_ref, w_cmp)[valid], rough[valid],
-                         np.hypot(sx, sy)[valid], ttree.query(np.c_[gx[valid], gy[valid]])[0]])
+                         np.minimum(w_ref, w_cmp)[valid], np.minimum(ray["ref"], ray["cmp"])[valid],
+                         rough[valid], np.hypot(sx, sy)[valid],
+                         ttree.query(np.c_[gx[valid], gy[valid]])[0]])
     X = np.where(np.isfinite(X), X, np.nanmedian(X, axis=0))
     model = fit_sigma(dz[valid], X, names)
     sigma = np.full(shape, np.nan)
@@ -356,8 +394,9 @@ def main(argv=None):
     # --- a-contrario windows ---
     zf = np.where(valid, u, 0.0)
     vf = valid.astype(float)
+    lsig = np.where(valid, np.log(sigma), 0.0)
     best = {k: np.full(shape, np.inf) for k in ("appeared", "removed")}  # min log10 NFA per cell
-    stats = []
+    stats, null = [], {}
     n_tests = 0
     for k in SCALES:
         S, C = (ndimage.uniform_filter(a, k, mode="constant") * k * k for a in (zf, vf))
@@ -367,6 +406,9 @@ def main(argv=None):
         sd = contrast_sd(k, args.cell, vp)
         with np.errstate(invalid="ignore", divide="ignore"):
             T = np.where(ok, (S / C - (S3 - S) / (C3 - C)) / sd, 0.0)
+            wsig = np.exp(ndimage.uniform_filter(lsig, k, mode="constant") * k * k / C)
+        full = (np.rint(C) == k * k) & (np.rint(C3 - C) == 8 * k * k)
+        T, null[str(k)] = empirical_null(T, ok, wsig, full.astype(int))
         stats.append((k, sd, ok, T))
     log_n = np.log10(n_tests)
     thr = np.log10(args.epsilon * km)
@@ -374,6 +416,17 @@ def main(argv=None):
         f"{SCALES[0] * args.cell:g}-{SCALES[-1] * args.cell:g} m, both signs); "
         f"statement when NFA < {args.epsilon:g}/km x {km:.3f} km = {10 ** thr:.3f}, "
         f"i.e. T > {norm.isf(10 ** thr / n_tests):.2f}")
+    log("  empirical null, NMAD of T per class (sigma quintile; partial / complete windows):")
+    for k, sd, ok, T in stats:
+        rows = null[str(k)]
+        log(f"    {k * args.cell:5.2f} m: " + " ".join(
+            f"{r['scale']:.2f}" + ("" if r["full"] else "p") for r in rows))
+    log("  null check per window side after it: sd of T, P(|T| > 3, 4, 5) "
+        "(Gaussian 2.7e-03, 6.3e-05, 5.7e-07)")
+    for k, sd, ok, T in stats:
+        t = T[ok]
+        log(f"    {k * args.cell:5.2f} m: sd {t.std():.2f} | "
+            + " ".join(f"{np.mean(np.abs(t) > c):.1e}" for c in (3, 4, 5)))
     for k, sd, ok, T in stats:
         for kind, sign in (("appeared", 1), ("removed", -1)):
             lnfa = np.where(ok, log_n + norm.logsf(sign * T) / np.log(10), np.inf)
@@ -419,7 +472,8 @@ def main(argv=None):
         w.writerows(rows)
     json.dump(dict(model, offset=offset, variogram=dict(lags=lags.tolist(), gamma=gam.tolist(),
                                                          params=vp.tolist()),
-                   contrast_sd={str(k): sd for k, sd, _, _ in stats}, n_tests=n_tests, track_km=km),
+                   contrast_sd={str(k): sd for k, sd, _, _ in stats}, empirical_null=null,
+                   n_tests=n_tests, track_km=km),
               open(os.path.join(args.out, "noise_model.json"), "w"), indent=1)
     import matplotlib
     matplotlib.use("Agg")
