@@ -127,6 +127,14 @@ def main():
        and abs(fv[15, 15] - np.log(2)) < 1e-9 and abs(fv[30, 30] - np.log(20)) < 1e-9 and k == 2,
        f"(class feature {fv[15, 15]:.3f} vs log 2 = {np.log(2):.3f}, {fv[30, 30]:.3f} vs log 20 = {np.log(20):.3f})")
 
+    image_change._G.update(ref=[(f"frame_{i:06d}",) for i in range(8)], ref_C=np.c_[np.arange(8.0), np.zeros((8, 2))],
+                           ref_A=np.tile([0.0, 0.0, 1.0], (8, 1)))
+    src = {sp: image_change._G.update(self_pair=sp) or image_change.source_views("frame_000003", np.array([3.0, 0, 0]),
+                                                                                np.array([0.0, 0, 1]))
+           for sp in (False, True)}
+    ok("self pair: the cmp view is never one of its own sources, still N_SOURCES of them",
+       3 in src[False] and 3 not in src[True] and len(src[True]) == image_change.N_SOURCES, f"({src})")
+
     n_ok = sum(c for _, c in checks)
     print(f"\n{n_ok}/{len(checks)} checks passed.")
     print("ALL GREEN" if n_ok == len(checks) else "FAILURES")

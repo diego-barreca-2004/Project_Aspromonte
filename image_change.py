@@ -33,7 +33,11 @@ structure of step 5 was chosen on N1 (ep2 vs ep1) and synthetic cylinders drawn 
 (5-30 cm wide, 5-30 cm high, random colour; tails fitted on one half of the track, objects on the
 other), never on the true objects: classes of views over classes of image texture (texture5 at
 5/km stated 28 false/km, views5 7/km at the same recall) and the mean of the views over their
-median or the mean over pixels (more recall for 5-7.5 cm). Outputs
+median or the mean over pixels (more recall for 5-7.5 cm). On the same-pass pairs ep1/ep1 and
+ep2/ep2 (ref = cmp, quieter than N1) the N1 tails state no false change up to 100/km: valid, but
+conservative on a quieter pair. Neither D divided by the pair's NMAD (21 false/km at 1/km on
+ep1/ep1 with the N1 tails) nor classes of local background, ring mean or ring standard deviation
+of the score (7 and 14 false/km at 1/km on N1, less recall), carried them better. Outputs
 in --out: changes.csv (the columns of measure_change.py; dz from the two DSMs, 90th percentile
 per cell, median offset removed), fields.npz, null_tails.json (this pair's own tails, the null
 of other pairs when the pair is N1), change_report.txt, change_map.png.
@@ -175,6 +179,15 @@ def nearest_views(c, a, C, A, n=N_SOURCES, max_angle=MAX_ANGLE):
     return cand[np.argsort(np.linalg.norm(C[cand] - c, axis=1))[:n]]
 
 
+def source_views(name, c, a):
+    """The N_SOURCES ref views nearest to the cmp view name (centre c, axis a). In a pair of a
+    pass with itself (a same-pass null) the view of the same name is left out: it would compare
+    the frame with itself."""
+    G = _G
+    near = nearest_views(c, a, G["ref_C"], G["ref_A"], N_SOURCES + G["self_pair"])
+    return [j for j in near if not (G["self_pair"] and G["ref"][j][0] == name)][:N_SOURCES]
+
+
 # --- change cue ---------------------------------------------------------------
 def ssim(a, b):
     """SSIM map of two grey images in [0, 1], Gaussian window of sigma 1.5 (Wang et al. 2004)."""
@@ -305,7 +318,7 @@ def view_votes(i):
     rays = pixel_rays(K, shape)
     Xw = (rays * d_ref[..., None] - t) @ R
     cues = []
-    for j in nearest_views(c, R[2], G["ref_C"], G["ref_A"]):
+    for j in source_views(name, c, R[2]):
         src = _ref_view(j)
         if src is None:
             continue
@@ -350,6 +363,7 @@ def prepare(ref_seg, cmp_seg, max_range=6.0, cell=0.05, track=None):
     shape = tuple((np.ceil((track.max(axis=0) - track.min(axis=0) + 2 * max_range) / cell) + 1).astype(int))
     _G.clear()
     _G.update(ref=ref, ref_C=ref_C, ref_A=ref_A, cmp=cmp_, geo=geo, max_range=max_range, cell=cell,
+              self_pair=os.path.realpath(ref_seg) == os.path.realpath(cmp_seg),
               ref_pts=np.column_stack([v["x"], v["y"], v["z"]]).astype(np.float32),
               ref_dense=os.path.join(ref_seg, "colmap", "dense"),
               cmp_dense=os.path.join(cmp_seg, "colmap", "dense"),
