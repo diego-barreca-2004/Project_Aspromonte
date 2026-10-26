@@ -81,8 +81,9 @@ SCALES = (2, 3, 5, 9, 15, 25, 40)  # window sides in cells: 0.1 to 2.0 m at 5 cm
 
 
 # --- inputs -------------------------------------------------------------------
-def read_pinhole_model(model_dir):
-    """Undistorted cameras (PINHOLE) and world-to-camera poses of a dense/sparse model."""
+def read_pinhole_model(model_dir, names=False):
+    """Undistorted cameras (PINHOLE) and world-to-camera poses of a dense/sparse model;
+    with names=True each pose also carries its image name."""
     cams = {}
     with open(os.path.join(model_dir, "cameras.bin"), "rb") as f:
         for _ in range(struct.unpack("<Q", f.read(8))[0]):
@@ -94,14 +95,15 @@ def read_pinhole_model(model_dir):
     with open(os.path.join(model_dir, "images.bin"), "rb") as f:
         for _ in range(struct.unpack("<Q", f.read(8))[0]):
             _, qw, qx, qy, qz, tx, ty, tz, cid = struct.unpack("<i7di", f.read(64))
-            while f.read(1) != b"\0":
-                pass
+            name = b""
+            while (c := f.read(1)) != b"\0":
+                name += c
             f.seek(24 * struct.unpack("<Q", f.read(8))[0], 1)
             w, x, y, z = np.array([qw, qx, qy, qz]) / np.linalg.norm([qw, qx, qy, qz])
             R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                           [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                           [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
-            poses.append((R, np.array([tx, ty, tz]), cams[cid]))
+            poses.append((R, np.array([tx, ty, tz]), cams[cid]) + ((name.decode(),) if names else ()))
     return poses
 
 
