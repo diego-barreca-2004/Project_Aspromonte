@@ -23,77 +23,29 @@ builds
   between them measured both in the heights and in the images, with thresholds taken from a
   pair of passes in which nothing moved.
 
-## Features
-
-- **GoPro calibration:** a ChArUco board filmed once gives the fisheye (Kannala-Brandt)
-  intrinsics, with per-view reprojection errors and an undistortion preview.
-- **Telemetry ingestion:** frames every 0.2 s, each with its GPS position and gravity
-  vector read from the GoPro metadata.
-- **Structure-from-Motion with gravity priors:** COLMAP incremental, or the global mapper
-  (GLOMAP) with the GoPro gravity as a prior on every pose.
-- **Georeferencing on near-straight walks:** GPS fit, or a gravity-levelled fit that also
-  fixes the roll about the direction of travel, which GPS alone cannot see; then ICP onto an
-  open 1 m LiDAR terrain model.
-- **Co-aligned passes:** all passes in one SfM model, so their dense clouds share one frame
-  and are compared without ICP.
-- **Change measured with a false-alarm budget:** in the heights and in the images, a change
-  is stated only if a pair of passes with nothing moved would produce fewer than a set number
-  of such changes per km of track (a-contrario test).
-- **One command per pass:** resumable stages, `--from`/`--to`, `--dry-run`, and QC gates that
-  stop the run on failures that would otherwise be silent (wrong frame size, too few
-  registered images, weak GPS fit, empty dense cloud, cloud in the wrong place).
-
-## How it works
+It wraps [COLMAP](https://colmap.github.io) and the
+[Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting) code, and adds GoPro
+fisheye calibration, telemetry ingestion, gravity priors, georeferencing on near-linear
+tracks, co-alignment of repeated passes and a-contrario change detection.
 
 <p align="center">
   <img src="assets/pipeline.svg" width="100%" alt="Pipeline overview">
 </p>
 
-1. **Shared front-end, one run per pass.** Frames and telemetry are extracted, SfM recovers
-   the camera poses, and the model is scaled and placed in UTM coordinates by GPS and gravity.
-2. **Track 1.** The frames of one pass train a 3DGS model, which is then fitted onto the
-   LiDAR terrain model and saved both in UTM and in a local frame for viewers.
-3. **Track 2.** All passes go into one SfM model, and each pass gets its own dense cloud in
-   the common frame. `measure_change.py` compares the heights of two passes and
-   `image_change.py` warps the reference views into the new frames and compares the images.
-4. **Thresholds.** Both tools are first run on a pair of passes with no objects placed; the
-   noise tails of that pair are saved in `null_tails.json` and set the threshold for every
-   other pair.
+## Quick start
 
-## Installation
-
-You need **Python 3.11 or newer**, [COLMAP](https://colmap.github.io) with CUDA
-([build notes for Blackwell GPUs](docs/BUILD_COLMAP_CUDA.md)) and ExifTool 13.0 or newer.
-Track 1 also needs the [Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting)
-code in `gaussian-splatting/`.
-
-```bash
-git clone https://github.com/diego-barreca-2004/Project_Aspromonte.git
-cd Project_Aspromonte
-python3 -m venv venv && venv/bin/pip install -r requirements.txt
-venv/bin/pip install "pycolmap>=4.2"   # only for compare_mappers.py and the gravity priors
-```
-
-Tested on WSL2 (Ubuntu), RTX 5070 Ti Laptop, CUDA 12.8, Python 3.12; see
-[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-
-## Usage
-
-### One pass: `run_pipeline.py`
-
-Frames, SfM, georeferencing, dense cloud and, with `splat true`, the 3DGS model:
+One pass, end to end (frames, SfM, georeferencing, dense cloud and, with `splat true`, the
+3DGS model):
 
 ```bash
 python3 run_pipeline.py --config pipeline.conf --video seg01.mp4 --workdir seg01
 ```
 
-Stages resume from existing outputs; `--from`/`--to` restrict the range and `--dry-run`
-prints the plan.
+Stages resume from existing outputs; `--from`/`--to` restrict the range, `--dry-run` prints
+the plan, and QC gates stop the run on otherwise silent failures.
 
-### Change between passes: `coalign.py`, `image_change.py`, `measure_change.py`
-
-Reconstruct the passes in one model, then measure the change against an object-free pair
-(here ep2 vs ep1), whose noise tails set the threshold:
+Compare passes (Track 2): reconstruct them in one model, then measure change against an
+object-free pair (here ep2 vs ep1), whose noise tails set the threshold:
 
 ```bash
 python3 coalign.py --pass ep1=seg01_ep1 --pass ep2=seg01_ep2 --pass ep3=seg01_ep3 \
@@ -107,6 +59,19 @@ python3 image_change.py --ref-seg $P/ep2 --cmp-seg $P/ep3 \
 ```
 
 All stages and options: [docs/PIPELINE.md](docs/PIPELINE.md).
+
+## Setup
+
+```bash
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
+for t in tests/test_*.py; do python3 "$t" || break; done   # synthetic scenes, known ground truth
+```
+
+Also needed: [COLMAP](https://colmap.github.io) with CUDA
+([build notes for Blackwell GPUs](docs/BUILD_COLMAP_CUDA.md)), ExifTool ≥ 13.0, and for
+Track 1 the [Inria 3DGS](https://github.com/graphdeco-inria/gaussian-splatting) code in
+`gaussian-splatting/`. Tested on WSL2 (Ubuntu), RTX 5070 Ti Laptop, CUDA 12.8, Python 3.12;
+see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 ## Results
 
@@ -171,25 +136,11 @@ Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
   ground to 0.3–0.4 m RMS but leaves a tilt of 1.6–3.2° per model.
 - **Splat views off the walked path** show floaters and a smeared background.
 
-## Development
-
-```bash
-for t in tests/test_*.py; do venv/bin/python "$t" || break; done
-```
-
-Each test builds a synthetic scene with known ground truth and checks the result against
-it. The suite runs offline in about 20 s with only `requirements.txt`: no COLMAP, no GPU and
-no field data. CI runs it on every push, on Python 3.11 to 3.14.
-
 ## License
 
-[MIT](LICENSE) © 2026 Diego Barreca.
-
-The repository does not bundle third-party code. Its dependencies are installed separately
-and keep their own licenses: NumPy, SciPy and rasterio (BSD-3-Clause), pyproj and py4dgeo
-(MIT), OpenCV (Apache-2.0), Matplotlib (PSF-based), plyfile (GPL-3.0-or-later), COLMAP,
-GLOMAP and pycolmap (BSD-3-Clause) and ExifTool (Perl license). The Inria 3DGS code is
-licensed for non-commercial research only and is needed for Track 1 only.
+MIT ([LICENSE](LICENSE)). COLMAP and GLOMAP are BSD; the Inria 3DGS code is
+non-commercial and applies to Track 1 only. Track 2 also uses plyfile, which is
+GPL-3.0-or-later; its other dependencies are permissive.
 
 ## Acknowledgements
 
