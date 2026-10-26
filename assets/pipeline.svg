@@ -22,7 +22,7 @@
 
   <rect x="16" y="36" width="140" height="92" rx="8" class="box"/>
   <text x="86" y="58" text-anchor="middle" class="ttl">GoPro HERO13</text>
-  <text x="86" y="76" text-anchor="middle" class="sub">5.3K 8:7 Wide, chest</text>
+  <text x="86" y="76" text-anchor="middle" class="sub">5.3K 8:7 Wide, handheld</text>
   <text x="86" y="92" text-anchor="middle" class="sub">video + telemetry</text>
   <text x="86" y="116" text-anchor="middle" class="scr">calibrate_camera.py</text>
 

@@ -17,8 +17,8 @@ motion artefacts. Fixed exposure is essential.
 | ISO | 100–800 | Limits noise while keeping exposure stable. |
 | Colour profile | Flat | Preserves dynamic range. |
 
-A chest mount damps vibration better than a handlebar mount on rough terrain. The lens
-model for the Wide field of view is `OPENCV_FISHEYE`. HERO11 and later also record a
+The camera was held in hand while walking. The lens model for the Wide field of view is
+`OPENCV_FISHEYE`. HERO11 and later also record a
 per-frame gravity vector (GPMF `GRAV`), read by `gopro_gravity.py`.
 
 ## Reference environment

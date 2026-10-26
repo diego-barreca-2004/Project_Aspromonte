@@ -73,7 +73,7 @@ python3 dsm_change.py --ref seg01_ep2/colmap/dense/fused_utm.ply \
 ## v1 results on seg01
 
 Three epochs of the same 152 m dirt road on an open dry-grass slope, walked with a
-chest-mounted GoPro. Objects placed on the trail: a flat plasterboard sheet in epoch 2; a
+handheld GoPro. Objects placed on the trail: a flat plasterboard sheet in epoch 2; a
 black cylinder, a ball and a white bucket in epoch 3. Epoch 3 was filmed in low light,
 epoch 2 in sun.
 
