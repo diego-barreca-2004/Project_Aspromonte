@@ -23,7 +23,8 @@ Steps:
   8. dense reconstruction per pass with those poses (image_undistorter, patch_match_stereo,
      stereo_fusion, as run_pipeline.py) and georef_cloud.py to colmap/dense/fused_utm.ply.
      The clouds are then compared without ICP (measure_change.py --ref-seg <out>/passes/<a>
-     --cmp-seg <out>/passes/<b>).
+     --cmp-seg <out>/passes/<b>). Another --max-image-size goes with another --passes-dir
+     (e.g. passes_1600px): the steps up to 6 are shared, the clouds of each size kept apart.
 
 Each step writes a marker in <out>/ and is skipped on a re-run; delete the marker to redo it.
 The source frames are only linked, never modified.
@@ -216,6 +217,8 @@ def main():
     ap.add_argument("--matching-gpu", default="0", choices=["0", "1"])
     ap.add_argument("--max-image-size", default="1000",
                     help="PatchMatch image size [px] (pipeline.conf max_image_size)")
+    ap.add_argument("--passes-dir", default="passes",
+                    help="folder under --out for the per-pass split and dense clouds (one per --max-image-size)")
     ap.add_argument("--sor-iters", default="2", help="georef_cloud.py floater removal, as pipeline.conf")
     ap.add_argument("--sor-k", default="20")
     ap.add_argument("--sor-std", default="2.0")
@@ -280,7 +283,7 @@ def main():
 
     here = os.path.dirname(os.path.abspath(__file__))
     for label, seg in segs:
-        pdir = os.path.join(out, "passes", label)
+        pdir = os.path.join(out, args.passes_dir, label)
         cm, dense = os.path.join(pdir, "colmap"), os.path.join(pdir, "colmap", "dense")
         sub, fused = os.path.join(cm, "sparse", "0"), os.path.join(dense, "fused.ply")
         os.makedirs(os.path.join(cm, "sparse"), exist_ok=True)
@@ -307,7 +310,8 @@ def main():
                  "--sor-k", args.sor_k, "--sor-std", args.sor_std])
         lines.append(f"  {label}: {ply_vertex_count(fused)} fused points -> {fused_utm}")
 
-    with open(os.path.join(out, "coalign_report.txt"), "w") as f:
+    name = "coalign_report.txt" if args.passes_dir == "passes" else f"coalign_report_{args.passes_dir}.txt"
+    with open(os.path.join(out, name), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n" + "\n".join(lines))
 
