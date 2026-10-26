@@ -38,11 +38,16 @@ and ranks blobs by area x |dz|. Here:
      dark cylinder of ep3, z 20-70 over ten cells, scored u < 2.9). Every run therefore also
      fits, on its own windows, the tail of the contrast D of z clipped to +-20 (bounded
      influence of one cell, magnitude kept) per window side, class of window roughness and
-     sign: generalised Pareto over the 99th percentile (peaks over threshold), written to
-     null_tails.json. Run on a null pair (N1), that file is the null of other pairs:
-     NFA = N_tests * P_null(D >= d). Out of sample on N1 (tails from one half of the track,
-     grid-level synthetic objects on the other), recall of objects of 10-30 cm at 1 false
-     statement per km went from 0.02 (step 6) to 0.14-0.17.
+     sign: generalised Pareto over the 99th percentile, written to null_tails.json. Windows
+     one cell apart overlap, so one blob of the null exceeds the threshold in hundreds of
+     windows (at 2 m the 1% of excesses came from one or two blobs and the fit was degenerate):
+     the excesses are declustered, one peak per k x k neighbourhood, and the fit is on the
+     peaks, with the rate of peaks per window in place of 1 - q. Run on a null pair (N1), the
+     file is the null of other pairs: NFA = N_tests * rate * P_null(peak excess >= d - u0).
+     Out of sample on the co-aligned N1 (tails from one half of the track, grid-level
+     synthetic objects on the other), recall of objects of 10-30 cm at 1 false statement per
+     km: Gaussian P of step 6 0.15 / 0.14, tails on all excesses 0.29 / 0.14 (whole / middle of the
+     track), on declustered peaks 0.41 / 0.46.
 
 The only exposed parameter is --epsilon (false statements per km). Outputs in --out:
 changes.csv (kind, E, N, area_m2, dz_median, dz_peak, n_cells, log10_nfa, scale_m, score),
@@ -311,14 +316,17 @@ def empirical_null(T, ok, wsig, full, n_strata=5, min_n=1000):
     return out, rows
 
 
-def fit_null_tails(windows, q=0.99, n_cls=5, max_exc=20000, min_n=1000):
+def fit_null_tails(windows, q=0.99, n_cls=5, max_exc=20000, min_peaks=50):
     """Tail of the window contrast D per window side, class of window roughness (quintiles of
-    its mean log roughness) and sign: generalised Pareto over the q quantile, maximum
-    likelihood. The shape is kept >= 0 (at least an exponential tail): a statement at 1 per km
-    needs P near 1e-8, five orders beyond the data, and a bounded tail fitted on half of N1
-    gave P = 0, so a statement at any threshold, to the first value past its end on the other
-    half. windows: (k, D, ok, f) with f the window's mean log roughness; classes with fewer
-    than min_n windows use all windows of that side."""
+    its mean log roughness) and sign. Declustered peaks over threshold: a peak is a window whose
+    sign * D is the largest in its k x k neighbourhood; generalised Pareto, maximum likelihood,
+    on the excesses of the peaks over u0, the q quantile of the windows of the class, lowered
+    to the value of the min_peaks-th highest peak when fewer peaks pass it. The rate of peaks
+    over u0 per window replaces 1 - q. The shape is kept >= 0 (at least an exponential tail): a
+    statement at 1 per km needs P near 1e-8, five orders beyond the data, and a bounded tail
+    fitted on half of N1 gave P = 0, so a statement at any threshold, to the first value past
+    its end on the other half. windows: (k, D, ok, f) with f the window's mean log roughness;
+    a class with min_peaks peaks or fewer uses all windows of that side."""
     rng = np.random.default_rng(0)
     scales = {}
     for k, D, ok, f in windows:
@@ -326,32 +334,37 @@ def fit_null_tails(windows, q=0.99, n_cls=5, max_exc=20000, min_n=1000):
         cls = np.searchsorted(edges, f, side="right")
         row = dict(edges=edges.tolist())
         for kind, sign in (("appeared", 1), ("removed", -1)):
+            xs = np.where(ok, sign * D, -np.inf)
+            peak = ok & (xs == ndimage.maximum_filter(xs, size=k, mode="constant", cval=-np.inf))
             fits = []
             for c in range(n_cls):
                 m = ok & (cls == c)
-                x = sign * D[m if m.sum() >= min_n else ok]
-                u0 = float(np.quantile(x, q))
-                exc = x[x > u0] - u0
+                if (peak & m).sum() <= min_peaks:
+                    m = ok
+                pv = np.sort(xs[peak & m])
+                u0 = min(float(np.quantile(xs[m], q)), float(pv[max(len(pv) - min_peaks - 1, 0)]))
+                exc = pv[pv > u0] - u0
+                rate = len(exc) / int(m.sum())
                 if len(exc) > max_exc:
                     exc = rng.choice(exc, max_exc, replace=False)
                 xi, _, beta = genpareto.fit(exc, floc=0)
                 if xi < 0:
                     xi, beta = 0.0, float(exc.mean())
-                fits.append([u0, float(xi), float(beta)])
+                fits.append([u0, float(xi), float(beta), rate])
             row[kind] = fits
         scales[str(k)] = row
     return dict(q=q, scales=scales)
 
 
-def tail_log10p(D, ok, f, row, kind, q):
-    """log10 P(sign D >= d) under one window side of fit_null_tails; 0 below the q quantile,
-    where no window can reach a threshold of order 1e-8."""
+def tail_log10p(D, ok, f, row, kind):
+    """log10 P(sign D >= d) under one window side of fit_null_tails; 0 below u0, where no
+    window can reach a threshold of order 1e-8."""
     sign = 1 if kind == "appeared" else -1
     cls = np.searchsorted(np.array(row["edges"]), f, side="right")
     lp = np.zeros(D.shape)
-    for c, (u0, xi, beta) in enumerate(row[kind]):
+    for c, (u0, xi, beta, rate) in enumerate(row[kind]):
         m = ok & (cls == c) & (sign * D > u0)
-        lp[m] = np.log10(1 - q) + genpareto.logsf(sign * D[m] - u0, xi, 0, beta) / np.log(10)
+        lp[m] = np.log10(rate) + genpareto.logsf(sign * D[m] - u0, xi, 0, beta) / np.log(10)
     return lp
 
 
@@ -538,12 +551,12 @@ def main(argv=None):
         log(f"  P from the null tails of {ext['source']} (z clipped to +-{clip:g}, {ext['track_km']:.3f} km); "
             "contrast needed per window side, smoothest / roughest class, appeared:")
         for k in SCALES:
-            need = [u0 + genpareto.isf(p_star / (1 - ext["q"]), xi, 0, beta)
-                    for u0, xi, beta in ext["scales"][str(k)]["appeared"]]
+            need = [u0 + genpareto.isf(p_star / rate, xi, 0, beta)
+                    for u0, xi, beta, rate in ext["scales"][str(k)]["appeared"]]
             log(f"    {k * args.cell:5.2f} m: {need[0]:7.2f} / {need[-1]:7.2f}")
     for (k, sd, ok, T), (_, D, _, wr) in zip(stats, windows):
         for kind, sign in (("appeared", 1), ("removed", -1)):
-            lp = (tail_log10p(D, ok, wr, ext["scales"][str(k)], kind, ext["q"]) if ext
+            lp = (tail_log10p(D, ok, wr, ext["scales"][str(k)], kind) if ext
                   else norm.logsf(sign * T) / np.log(10))
             lnfa = np.where(ok, log_n + lp, np.inf)
             sig = lnfa < thr

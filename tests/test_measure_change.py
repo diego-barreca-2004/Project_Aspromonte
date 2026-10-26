@@ -10,7 +10,10 @@ so the class edges never fall on ties). Checks:
     its maximum: P stays finite and keeps falling, so a statement needs a contrast beyond what
     the null pair showed, not any contrast past its end;
   - classes of roughness: where rough windows spread 4 times more than smooth ones, the same
-    contrast is more significant in a smooth window, and both signs are fitted apart.
+    contrast is more significant in a smooth window, and both signs are fitted apart;
+  - declustering: on 9 x 9 window means one cell apart (Student-t cells), N_windows * P at a
+    contrast d matches the number of blobs over d within a factor 2, while the windows over d
+    are 2.5-3 times as many.
 
 Run:  python3 tests/test_measure_change.py
 """
@@ -18,6 +21,7 @@ import os
 import sys
 
 import numpy as np
+from scipy import ndimage
 from scipy.stats import t as student_t
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,9 +37,10 @@ def ok(name, cond, extra=""):
     print(f"  [{'OK' if cond else 'FAIL'}] {name} {extra}")
 
 
-def log10p(tails, d, f, kind="appeared"):
-    d, f = np.atleast_1d(np.asarray(d, float)), np.broadcast_to(np.asarray(f, float), np.shape(d))
-    return tail_log10p(d, np.ones(d.shape, bool), f, tails["scales"]["5"], kind, tails["q"])
+def log10p(tails, d, f, kind="appeared", k=5):
+    d = np.atleast_1d(np.asarray(d, float))
+    f = np.broadcast_to(np.asarray(f, float), d.shape)
+    return tail_log10p(d, np.ones(d.shape, bool), f, tails["scales"][str(k)], kind)
 
 
 def main():
@@ -58,7 +63,7 @@ def main():
     lp = log10p(tails, [0.995, 1.5, 3.0], [0.5])
     ok("bounded null: P finite past the maximum and falling", np.all(np.isfinite(lp)) and lp[0] > lp[1] > lp[2]
        and lp[1] > -30, f"({' '.join(f'{x:.1f}' for x in lp)})")
-    ok("bounded null: shape kept >= 0", all(xi >= 0 for _, xi, _ in tails["scales"]["5"]["appeared"]))
+    ok("bounded null: shape kept >= 0", all(xi >= 0 for _, xi, _, _ in tails["scales"]["5"]["appeared"]))
 
     D = rng.normal(0, 1, n) * (1 + 3 * f) + np.where(f > 0.5, 0.5, 0.0)
     tails = fit_null_tails([(5, D, ok_all, f)])
@@ -68,6 +73,17 @@ def main():
     edges = tails["scales"]["5"]["edges"]
     ok("class edges at the quintiles of f", np.allclose(edges, [0.2, 0.4, 0.6, 0.8], atol=0.01),
        f"({' '.join(f'{e:.3f}' for e in edges)})")
+
+    n, k, d = 800, 9, 3.5
+    rng = np.random.default_rng(1)
+    D = ndimage.uniform_filter(rng.standard_t(5, (n, n)), k) * k  # 9 x 9 window means, one cell apart
+    D /= D.std()
+    tails = fit_null_tails([(k, D, np.ones((n, n), bool), rng.uniform(0, 1, (n, n)))], n_cls=1)
+    expected = n * n * 10 ** log10p(tails, [d], [0.5], k=k)[0]
+    clusters = ndimage.label(D >= d)[1]
+    ok("overlapping windows: N_windows * P counts blobs over d, not windows over d",
+       abs(np.log10(expected / clusters)) < 0.3 and (D >= d).sum() > 2 * clusters,
+       f"(expected {expected:.0f}, blobs {clusters}, windows {(D >= d).sum()})")
 
     n_ok = sum(c for _, c in checks)
     print(f"\n{n_ok}/{len(checks)} checks passed.")
