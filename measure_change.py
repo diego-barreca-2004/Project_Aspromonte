@@ -32,6 +32,17 @@ and ranks blobs by area x |dz|. Here:
      NFA = N_tests * P(N(0,1) >= T). A change is stated where
      NFA < --epsilon * track km, so --epsilon is the expected number of false statements per
      km. Significant windows of one sign merge into one change; rank by -log10 NFA.
+  7. null tails from a null pair (plan B3; --null-tails): even after step 6 the tails of T
+     stay far heavier than Gaussian (P(|T| > 5) about 5e-4 per window instead of 5.7e-7), and
+     normal scores cap every cell at the rank of the vegetation and gross errors above it (the
+     dark cylinder of ep3, z 20-70 over ten cells, scored u < 2.9). Every run therefore also
+     fits, on its own windows, the tail of the contrast D of z clipped to +-20 (bounded
+     influence of one cell, magnitude kept) per window side, class of window roughness and
+     sign: generalised Pareto over the 99th percentile (peaks over threshold), written to
+     null_tails.json. Run on a null pair (N1), that file is the null of other pairs:
+     NFA = N_tests * P_null(D >= d). Out of sample on N1 (tails from one half of the track,
+     grid-level synthetic objects on the other), recall of objects of 10-30 cm at 1 false
+     statement per km went from 0.02 (step 6) to 0.14-0.17.
 
 The only exposed parameter is --epsilon (false statements per km). Outputs in --out:
 changes.csv (kind, E, N, area_m2, dz_median, dz_peak, n_cells, log10_nfa, scale_m, score),
@@ -54,7 +65,7 @@ import numpy as np
 from plyfile import PlyData
 from scipy import ndimage, optimize
 from scipy.spatial import cKDTree
-from scipy.stats import norm
+from scipy.stats import genpareto, norm
 
 from dsm_change import grid_stats, read_track
 from geo_align import read_camera_centres
@@ -300,6 +311,50 @@ def empirical_null(T, ok, wsig, full, n_strata=5, min_n=1000):
     return out, rows
 
 
+def fit_null_tails(windows, q=0.99, n_cls=5, max_exc=20000, min_n=1000):
+    """Tail of the window contrast D per window side, class of window roughness (quintiles of
+    its mean log roughness) and sign: generalised Pareto over the q quantile, maximum
+    likelihood. The shape is kept >= 0 (at least an exponential tail): a statement at 1 per km
+    needs P near 1e-8, five orders beyond the data, and a bounded tail fitted on half of N1
+    gave P = 0, so a statement at any threshold, to the first value past its end on the other
+    half. windows: (k, D, ok, f) with f the window's mean log roughness; classes with fewer
+    than min_n windows use all windows of that side."""
+    rng = np.random.default_rng(0)
+    scales = {}
+    for k, D, ok, f in windows:
+        edges = np.quantile(f[ok], np.linspace(0, 1, n_cls + 1))[1:-1]
+        cls = np.searchsorted(edges, f, side="right")
+        row = dict(edges=edges.tolist())
+        for kind, sign in (("appeared", 1), ("removed", -1)):
+            fits = []
+            for c in range(n_cls):
+                m = ok & (cls == c)
+                x = sign * D[m if m.sum() >= min_n else ok]
+                u0 = float(np.quantile(x, q))
+                exc = x[x > u0] - u0
+                if len(exc) > max_exc:
+                    exc = rng.choice(exc, max_exc, replace=False)
+                xi, _, beta = genpareto.fit(exc, floc=0)
+                if xi < 0:
+                    xi, beta = 0.0, float(exc.mean())
+                fits.append([u0, float(xi), float(beta)])
+            row[kind] = fits
+        scales[str(k)] = row
+    return dict(q=q, scales=scales)
+
+
+def tail_log10p(D, ok, f, row, kind, q):
+    """log10 P(sign D >= d) under one window side of fit_null_tails; 0 below the q quantile,
+    where no window can reach a threshold of order 1e-8."""
+    sign = 1 if kind == "appeared" else -1
+    cls = np.searchsorted(np.array(row["edges"]), f, side="right")
+    lp = np.zeros(D.shape)
+    for c, (u0, xi, beta) in enumerate(row[kind]):
+        m = ok & (cls == c) & (sign * D > u0)
+        lp[m] = np.log10(1 - q) + genpareto.logsf(sign * D[m] - u0, xi, 0, beta) / np.log(10)
+    return lp
+
+
 # --- main -----------------------------------------------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Per-cell noise model and a-contrario change measurement.")
@@ -318,6 +373,8 @@ def main(argv=None):
     ap.add_argument("--pct", type=float, default=90.0, help="height percentile per cell")
     ap.add_argument("--min-pts", type=int, default=3, help="minimum points per valid cell")
     ap.add_argument("--cache", help="folder for the views-per-point cache")
+    ap.add_argument("--null-tails", help="null_tails.json of a run on a null pair (N1): P of the "
+                    "window contrast from its tails; without it, Gaussian P after central matching")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     if args.icp and args.cc_shift is None:
@@ -433,18 +490,32 @@ def main(argv=None):
     best = {k: np.full(shape, np.inf) for k in ("appeared", "removed")}  # min log10 NFA per cell
     stats, null = [], {}
     n_tests = 0
+    ext = json.load(open(args.null_tails)) if args.null_tails else None
+    clip = ext["clip"] if ext else 20.0
+    zc = np.where(valid, np.clip(z, -clip, clip), 0.0)
+    lrough = np.zeros(shape)
+    lrough[valid] = np.log(X[:, names.index("roughness (min) m")] + 1e-4)
+    windows = []  # (k, D of clipped z, ok, window mean log roughness) for the null tails
     for k in SCALES:
         S, C = (ndimage.uniform_filter(a, k, mode="constant") * k * k for a in (zf, vf))
         S3, C3 = (ndimage.uniform_filter(a, 3 * k, mode="constant") * 9 * k * k for a in (zf, vf))
         ok = valid & (C >= 0.5 * k * k) & (C3 - C >= 0.5 * 8 * k * k)
         n_tests += 2 * int(ok.sum())
         sd = contrast_sd(k, args.cell, vp)
+        Sc, Sc3 = (ndimage.uniform_filter(zc, w, mode="constant") * w * w for w in (k, 3 * k))
         with np.errstate(invalid="ignore", divide="ignore"):
             T = np.where(ok, (S / C - (S3 - S) / (C3 - C)) / sd, 0.0)
             wsig = np.exp(ndimage.uniform_filter(lsig, k, mode="constant") * k * k / C)
+            D = np.where(ok, Sc / C - (Sc3 - Sc) / (C3 - C), 0.0)
+            wr = np.where(ok, ndimage.uniform_filter(lrough, k, mode="constant") * k * k / C, 0.0)
         full = (np.rint(C) == k * k) & (np.rint(C3 - C) == 8 * k * k)
         T, null[str(k)] = empirical_null(T, ok, wsig, full.astype(int))
         stats.append((k, sd, ok, T))
+        windows.append((k, D, ok, wr))
+    own = fit_null_tails(windows)
+    own.update(clip=clip, track_km=km, source=os.path.abspath(args.out),
+               classes="quintiles of the window mean of log(roughness (min) + 1e-4 m)")
+    json.dump(own, open(os.path.join(args.out, "null_tails.json"), "w"), indent=1)
     log_n = np.log10(n_tests)
     thr = np.log10(args.epsilon * km)
     log(f"\n=== a-contrario test ===\n  {n_tests:,} tests ({len(SCALES)} window sizes "
@@ -462,9 +533,19 @@ def main(argv=None):
         t = T[ok]
         log(f"    {k * args.cell:5.2f} m: sd {t.std():.2f} | "
             + " ".join(f"{np.mean(np.abs(t) > c):.1e}" for c in (3, 4, 5)))
-    for k, sd, ok, T in stats:
+    if ext:
+        p_star = 10 ** thr / n_tests
+        log(f"  P from the null tails of {ext['source']} (z clipped to +-{clip:g}, {ext['track_km']:.3f} km); "
+            "contrast needed per window side, smoothest / roughest class, appeared:")
+        for k in SCALES:
+            need = [u0 + genpareto.isf(p_star / (1 - ext["q"]), xi, 0, beta)
+                    for u0, xi, beta in ext["scales"][str(k)]["appeared"]]
+            log(f"    {k * args.cell:5.2f} m: {need[0]:7.2f} / {need[-1]:7.2f}")
+    for (k, sd, ok, T), (_, D, _, wr) in zip(stats, windows):
         for kind, sign in (("appeared", 1), ("removed", -1)):
-            lnfa = np.where(ok, log_n + norm.logsf(sign * T) / np.log(10), np.inf)
+            lp = (tail_log10p(D, ok, wr, ext["scales"][str(k)], kind, ext["q"]) if ext
+                  else norm.logsf(sign * T) / np.log(10))
+            lnfa = np.where(ok, log_n + lp, np.inf)
             sig = lnfa < thr
             if not sig.any():
                 continue
