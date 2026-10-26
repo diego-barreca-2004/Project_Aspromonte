@@ -95,21 +95,29 @@ Reconstructed alone and aligned by ICP, the height difference ep3 − ep2 on bar
 still bends by 10 cm along the track (NMAD 5.4 cm). Reconstructed in one co-aligned model, the difference
 is flat within 0.5 cm (NMAD 0.95 cm), with no ICP.
 
-Every threshold and design choice was made on the object-free pair ep2 vs ep1 and on
-synthetic cylinders drawn into it, never on the placed objects. The test pair ep3 vs ep2
-was then run once, thresholds frozen, at 1 false change per km of track:
+Each method gives every candidate change a significance and **states** it, i.e. declares
+it real, when the significance passes a threshold. The threshold is set so that a pair of
+passes in which nothing moved would give about 1 false change per km of track. It was set,
+like every other design choice, on the object-free pair ep2 vs ep1 and on synthetic
+cylinders drawn into it. The placed objects were looked at once, on the test pair ep3 vs
+ep2, with everything frozen:
 
-| Object | Size | Heights (`measure_change.py`) | Images (`image_change.py`) |
-|--------|------|-------------------------------|----------------------------|
-| Bucket | 31 cm wide, 27 cm high | stated, 1st | not stated, ranked 1st |
-| Ball | 22 cm | stated, 5th | not stated, ranked 3rd |
-| Black cylinder | 7.4 cm wide, 17 cm high | missed | not stated, ranked 2nd |
-| False changes | | 6 (39.5 per km) | 0 |
+| Object (width × height) | Heights (`measure_change.py`) | Images (`image_change.py`) |
+|-------------------------|-------------------------------|----------------------------|
+| Bucket (31 × 27 cm) | stated, 1st of 8 | not stated, 1st candidate |
+| Ball (22 cm) | stated, 5th of 8 | not stated, 3rd candidate |
+| Black cylinder (7.4 × 17 cm) | missed | not stated, 2nd candidate |
+| False changes stated | 6 of 8 (39.5 per km) | none |
 
-In the images the three objects are the three most significant changes of the track, with
-no false change before them. The 1 per km threshold is conservative there because the
-object-free pair is noisier than the test pair. Details:
-[docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
+- **Heights:** the bucket and the ball are stated, but so are 6 false changes, far more
+  than 1 per km: the height noise of the test pair is larger than the object-free pair
+  predicted. The cylinder is below that noise.
+- **Images:** nothing is stated, because the object-free pair is noisier than the test pair
+  and its threshold is too strict here. Sorted by significance, though, the three objects
+  are the first three candidates of the whole track: a looser threshold would state all
+  three before any false change.
+
+Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
 
 ## Limitations
 
