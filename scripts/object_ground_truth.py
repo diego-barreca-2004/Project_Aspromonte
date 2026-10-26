@@ -18,7 +18,7 @@ For each object, starting from a frame and a rough pixel position read off the v
 The median over frames is reported, with the spread.
 
 Usage:
-  python3 scripts/object_ground_truth.py --seg ~/Progetto_Aspromonte/seg01_ep3 \
+  python3 scripts/object_ground_truth.py --seg seg01_ep3 \
       --object bucket:white:336:704:1190 --object ball:saturated:175:448:1120:sphere \
       --object cylinder:dark:64:848:1106 --out gt.json
 """

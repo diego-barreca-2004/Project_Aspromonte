@@ -30,9 +30,9 @@ Each step writes a marker in <out>/ and is skipped on a re-run; delete the marke
 The source frames are only linked, never modified.
 
 Usage:
-  python3 coalign.py --pass ep2=~/Progetto_Aspromonte/seg01_ep2 \
-                     --pass ep3=~/Progetto_Aspromonte/seg01_ep3 \
-                     --out ~/Progetto_Aspromonte/coalign/seg01_ep2_ep3 \
+  python3 coalign.py --pass ep2=seg01_ep2 \
+                     --pass ep3=seg01_ep3 \
+                     --out coalign/seg01_ep2_ep3 \
                      --calibration ./calib_out/calibration_fisheye.json
 """
 import argparse

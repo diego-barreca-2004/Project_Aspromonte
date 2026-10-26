@@ -19,10 +19,14 @@ detection (Track 2, [CHANGE_DETECTION.md](CHANGE_DETECTION.md)).
 | `georef_splat.py` | Georeferencing | Apply the Sim3 to the splat, refine onto the DTM by ICP, write the UTM splat and a recentred `view.ply`. |
 | `georef_cloud.py` | Change detection | Apply the Sim3 to a dense MVS cloud with floater removal; float64 UTM output. |
 | `run_m3c2.py` | Change detection | Scripted M3C2 between two epochs (py4dgeo), with ICP, cropping and stable-patch statistics. |
-| `dsm_change.py` | Change detection | Compact-object detection by DSM differencing on bare ground inside the trail corridor. |
+| `dsm_change.py` | Change detection | Compact-object detection by DSM differencing on bare ground inside the trail corridor (v1). |
+| `coalign.py` | Change detection | One SfM model for several passes, tied by matches between passes near the GPS track; one GPS Sim3 for all, dense cloud per pass. |
+| `measure_change.py` | Change detection | Height change with a per-cell noise model and an a-contrario test against the tails of an object-free pair. |
+| `image_change.py` | Change detection | Change measured in the frames: the reference pass warped into each new view, same a-contrario test. |
+| `cd_eval.py` | Change detection | False changes per km, object ranks and FROC of a run, against placed objects, synthetic objects and excluded zones. |
 | `run_pipeline.py`, `pipeline.conf` | Orchestration | One command per epoch, with QC gates and a shared reconstruction contract. |
-| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py` and the gravity-levelled georeferencing. |
-| `scripts/` | Reports and figures | `mapper_report.py` and `bend_check.py` aggregate the SfM comparison; `change_map_figure.py` and `render_cloud_gif.py` draw the README figures. |
+| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py`, `measure_change.py`, `image_change.py`, `cd_eval.py`, `coalign.py` and the gravity-levelled georeferencing. |
+| `scripts/` | Reports and figures | `mapper_report.py` and `bend_check.py` aggregate the SfM comparison; `change_map_figure.py` and `render_cloud_gif.py` draw the README figures; `object_ground_truth.py` measures the placed objects in the frames, `synthetic_objects.py` inserts synthetic objects to measure recall, `d0_candidates.py` explains the DSM candidates. |
 
 COLMAP and the Inria 3DGS code are not vendored; they are installed separately
 ([ENVIRONMENT.md](ENVIRONMENT.md)).
