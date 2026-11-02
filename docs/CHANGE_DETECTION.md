@@ -199,7 +199,65 @@ N1 and the synthetic objects:
   instead of views: 7 and 14 false changes per km at 1 per km on N1, lower recall.
 
 The remaining fix is in the data: an object-free pair with the noise of the test pair, i.e.
-recorded in the same session (below).
+recorded in the same session. The second session below does this.
+
+### Second session: object-free pair in the same session
+
+On 1 November 2026 the same trail was walked three times within about 15 minutes, with the
+same handheld GoPro at the same resolution and frame rate as the first session: pass A, pass B with nothing changed, then
+four objects placed on the trail, then pass C. A, B and C were co-aligned in one model
+(`coalign.py`, defaults; 607/607 images of each pass registered). The passes are much more
+strongly tied than the June–July ones: 594,882 3D points are seen by more than one pass
+(75,826 for ep1–ep3), with a median of 303 inliers per cross-pass image pair (111).
+
+The method was not changed after the first test. Tails come from A vs B; the objects were
+looked at once, on C vs B, at ε = 1 false change per km:
+
+```bash
+P=coalign/seg01_ABC/passes
+python3 measure_change.py --ref-seg $P/A --cmp-seg $P/B --out nfa_AB
+python3 measure_change.py --ref-seg $P/B --cmp-seg $P/C \
+    --null-tails nfa_AB/null_tails.json --out nfa_CB
+python3 image_change.py --ref-seg $P/A --cmp-seg $P/B --out img_AB
+python3 image_change.py --ref-seg $P/B --cmp-seg $P/C \
+    --null-tails img_AB/null_tails.json --out img_CB
+```
+
+| | Heights | Images |
+|---|---|---|
+| Statements | 6, of which 2 false (12.7 per km) | 3, of which 1 false (6.3 per km) |
+| Backpack, speaker on top (55 × 31 cm, lying flat) | 1st, 4 cm off, peak dz 22 cm | 1st, 4 cm off |
+| Bucket (50 cm wide, 30 cm high) | 2nd, 7 cm off, peak dz 29.7 cm | 2nd, 5 cm off |
+| Ball (32 cm) | 3rd, 12 cm off, peak dz 19.7 cm | not stated |
+| Jacket (54 × 46 cm, on the ground) | 4th, 26 cm off, peak dz 24.9 cm | not stated |
+
+- The height noise is half that of the first session: NMAD of dz 0.45 cm on A vs B and
+  0.51 cm on C vs B (0.90 cm on ep3 vs ep2). Median image score 0.056 on A vs B and 0.067
+  on C vs B (0.134 on N1, 0.094 on ep3 vs ep2).
+- In the heights the four objects are the four most significant statements, before any
+  false one. The two false statements are still more than the threshold allows (0.16
+  expected over 158 m, P(N ≥ 2) = 0.011). The first is the canopy of a 3–4 m shrub beside
+  the start of the track: both clouds hold points up to about 4 m above the ground there,
+  sampled differently. The second is 2 m from it, on the trail, +3 cm; its cause was not
+  checked. The false statement in the images is 0.01 m², +2.5 cm, just past the threshold
+  (log10 NFA −0.92 against −0.80); its cause was not checked either.
+- The ball's peak dz is 19.7 cm against a 32 cm diameter: MVS misses the top of the sphere.
+- In the images the jacket and the ball are not stated. Their rank on the NFA map was not
+  computed: at an open threshold the blobs of `changes.csv` merge, so that list is not a
+  ranking.
+- These objects are larger than those of the first session, and the small dark cylinder
+  has no counterpart here, so the gain over the first test cannot be split between the
+  same-session null pair and the larger objects.
+
+Ground truth. Sizes are the operator's estimates with a phone measuring app; the height of
+the backpack and of the jacket above the ground was not measured, so only an upper bound is
+used for them. Positions come from the frames of C and the co-aligned poses, never from the
+dense clouds: `scripts/object_ground_truth.py` for the backpack and the ball (median ray
+miss 0.6 and 0.3 cm); its colour segmentation loses the bucket and the jacket (ray miss
+17–55 cm), so their centres were read by eye in 4–6 frames and triangulated the same way
+(ray miss 0.5 and 2.2 cm). Along the track the positions agree with the operator's
+measurements within 2 m: start to bucket 53.0 m (51 m measured), bucket to backpack 23.2 m
+(22 m), backpack to ball 43.9 m (44 m).
 
 ## Designing a controlled change
 

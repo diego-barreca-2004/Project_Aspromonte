@@ -13,9 +13,10 @@ model and into change maps between repeated passes, in UTM coordinates.
   (30 m stretch of the second pass, 121 frames at 3200 px).</em>
 </p>
 
-A GoPro HERO13 was walked three times along the same 152 m trail in the Aspromonte massif
-(Calabria, Italy). From the raw video and its telemetry (GPS and gravity) this repository
-builds
+A handheld GoPro HERO13 was walked along the same 152 m trail in the Aspromonte massif
+(Calabria, Italy) three times on different days in June and July 2026, and three more times
+in one session in November 2026. From the raw video and its telemetry (GPS and gravity) this
+repository builds
 
 - **Track 1:** a navigable 3D Gaussian Splatting (3DGS) model, georeferenced by GPS and
   refined by ICP onto an open 1 m LiDAR terrain model;
@@ -101,10 +102,32 @@ is flat within 0.5 cm (NMAD 0.95 cm), with no ICP.
 
 Each method gives every candidate change a significance and **states** it, i.e. declares
 it real, when the significance passes a threshold. The threshold is set so that a pair of
-passes in which nothing moved would give about 1 false change per km of track. It was set,
-like every other design choice, on the object-free pair ep2 vs ep1 and on synthetic
-cylinders drawn into it. The placed objects were looked at once, on the test pair ep3 vs
-ep2, with everything frozen:
+passes in which nothing moved would give about 1 false change per km of track. Every design
+choice was made on the object-free pair ep2 vs ep1 and on synthetic cylinders drawn into it;
+the method was then frozen and tested twice on objects placed on the trail.
+
+**Second session (November 2026): object-free pair in the same session.** Pass A, pass B
+with nothing changed, four objects placed, pass C, within about 15 minutes. Thresholds from
+A vs B, objects looked at once on C vs B:
+
+| Object (size from a phone measuring app) | Heights (`measure_change.py`) | Images (`image_change.py`) |
+|-------------------------|-------------------------------|----------------------------|
+| Backpack, speaker on top (55 × 31 cm, lying flat) | stated, 1st of 6 | stated, 1st of 3 |
+| Bucket (50 cm wide, 30 cm high) | stated, 2nd of 6 | stated, 2nd of 3 |
+| Ball (32 cm) | stated, 3rd of 6 | not stated |
+| Jacket (54 × 46 cm, on the ground) | stated, 4th of 6 | not stated |
+| False changes stated | 2 of 6 (12.7 per km) | 1 of 3 (6.3 per km) |
+
+- **Heights:** all four objects are stated, ahead of any false change. The height noise is
+  half that of the first test pair (NMAD of dz in `measure_change.py`: 0.45 cm on A vs B,
+  0.90 cm on ep3 vs ep2). Two false changes are still more than 1 per km allows; one is the
+  canopy of a 3–4 m shrub at the start of the track.
+- **Images:** the backpack and the bucket are stated; the ball and the jacket are not.
+- These objects are larger than those of the first session, so the gain cannot be split
+  between the same-session null pair and the object size.
+
+**First session (June–July 2026).** Thresholds from ep2 vs ep1, objects looked at once on
+ep3 vs ep2:
 
 | Object (width × height) | Heights (`measure_change.py`) | Images (`image_change.py`) |
 |-------------------------|-------------------------------|----------------------------|
@@ -125,13 +148,15 @@ Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).
 
 ## Limitations
 
-- **One segment, three passes:** a single 152 m trail on an open slope; forest canopy,
-  longer sequences and other cameras are untested.
+- **One segment, two sessions:** a single 152 m trail on an open slope, six passes in all;
+  forest canopy, longer sequences and other cameras are untested.
 - **Small objects:** a 7.4 cm dark cylinder stays below the height noise of MVS at
-  `max_image_size` 1000, and in the images it is ranked but not stated.
-- **One object-free pair:** all thresholds come from ep2 vs ep1, noisier than the test pair.
-  A null pair recorded in the same session as the test pair would match its noise; a new
-  session is planned.
+  `max_image_size` 1000, and in the images it is ranked but not stated. The second
+  session has no object that small.
+- **Two tests, few objects:** seven placed objects over two test pairs; the false-change
+  rate is measured on 0.15 km per pair.
+- **Vegetation:** tall shrubs are sampled differently from pass to pass, and one gives a
+  false change in the heights of the second session.
 - **Georeferencing:** consumer GPS gives metre-level accuracy; ICP onto the DTM brings the
   ground to 0.3–0.4 m RMS but leaves a tilt of 1.6–3.2° per model.
 - **Splat views off the walked path** show floaters and a smeared background.
