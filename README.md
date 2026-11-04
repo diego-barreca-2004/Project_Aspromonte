@@ -106,6 +106,25 @@ passes in which nothing moved would give about 1 false change per km of track. E
 choice was made on the object-free pair ep2 vs ep1 and on synthetic cylinders drawn into it;
 the method was then frozen and tested twice on objects placed on the trail.
 
+The two methods read different evidence in each 5 cm ground cell, then run the same test on it.
+
+- **Heights** (`measure_change.py`) compare shape. Each pass gives a dense cloud, each cell
+  gets a height from it, and the cue is the height difference dz between the two passes:
+  did the ground go up or down here?
+- **Images** (`image_change.py`) compare appearance and never reconstruct the new object.
+  For each frame of the new pass, the frames of the old pass are warped into that view
+  through the old geometry. The result is what the frame should look like if nothing had
+  moved. The cue is the per-pixel error between that prediction and the real frame, carried
+  down to the ground cell and averaged over every frame that sees it: do the photos here
+  differ from what the old pass predicts?
+- The test is the same for both: the mean of a window against the ring around it, judged
+  against the tails of the object-free pair.
+
+The two cues complement each other. An object one or two cells wide stays below the height
+noise of the dense reconstruction, but in the frames it covers about a hundred pixels in tens
+of views. In the second session, on the other hand, the heights state the ball and the jacket
+and the images do not; why the images miss them was not checked.
+
 **Second session (November 2026): object-free pair in the same session.** Pass A, pass B
 with nothing changed, four objects placed, pass C, within about 15 minutes. Thresholds from
 A vs B, objects looked at once on C vs B:
