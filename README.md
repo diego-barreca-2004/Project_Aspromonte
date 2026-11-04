@@ -4,8 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
-Action-camera video of a mountain trail, turned into a georeferenced 3D Gaussian Splatting
-model and into change maps between repeated passes, in UTM coordinates.
+This repository turns action-camera video of a mountain trail into a georeferenced 3D
+Gaussian Splatting model and into change maps between repeated passes, in UTM coordinates.
 
 <p align="center">
   <img src="assets/splat_segment_render.jpg" width="80%" alt="Render of the 3DGS model of a 30 m stretch of the trail">
@@ -97,33 +97,25 @@ Tables and the bent-model analysis: [docs/SFM_COMPARISON.md](docs/SFM_COMPARISON
 ### Change detection
 
 Reconstructed alone and aligned by ICP, the height difference ep3 − ep2 on bare ground
-still bends by 10 cm along the track (NMAD 5.4 cm). Reconstructed in one co-aligned model, the difference
-is flat within 0.5 cm (NMAD 0.95 cm), with no ICP.
+still bends by 10 cm along the track (NMAD 5.4 cm). Reconstructed in one co-aligned model,
+it is flat within 0.5 cm (NMAD 0.95 cm), with no ICP.
 
-Each method gives every candidate change a significance and **states** it, i.e. declares
-it real, when the significance passes a threshold. The threshold is set so that a pair of
-passes in which nothing moved would give about 1 false change per km of track. Every design
-choice was made on the object-free pair ep2 vs ep1 and on synthetic cylinders drawn into it;
-the method was then frozen and tested twice on objects placed on the trail.
+Both methods work on a 5 cm ground grid, but they read different evidence in it:
 
-The two methods read different evidence in each 5 cm ground cell, then run the same test on it.
-
-- **Heights** (`measure_change.py`) compare shape. Each pass gives a dense cloud, each cell
-  gets a height from it, and the cue is the height difference dz between the two passes:
-  did the ground go up or down here?
+- **Heights** (`measure_change.py`) compare shape: the height difference dz between the
+  dense clouds of the two passes. Did the ground go up or down here?
 - **Images** (`image_change.py`) compare appearance and never reconstruct the new object.
-  For each frame of the new pass, the frames of the old pass are warped into that view
-  through the old geometry. The result is what the frame should look like if nothing had
-  moved. The cue is the per-pixel error between that prediction and the real frame, carried
-  down to the ground cell and averaged over every frame that sees it: do the photos here
-  differ from what the old pass predicts?
-- The test is the same for both: the mean of a window against the ring around it, judged
-  against the tails of the object-free pair.
+  The old frames are warped into each new frame through the old geometry, which predicts
+  what the frame should look like if nothing had moved. The per-pixel error against the real
+  frame is carried down to the ground and averaged over every frame that sees the cell.
 
-The two cues complement each other. An object one or two cells wide stays below the height
-noise of the dense reconstruction, but in the frames it covers about a hundred pixels in tens
-of views. In the second session, on the other hand, the heights state the ball and the jacket
-and the images do not; why the images miss them was not checked.
+An object one or two cells wide stays below the height noise of the dense reconstruction,
+yet covers about a hundred pixels in tens of frames, so the two cues complement each other.
+Both then run the same test, the mean of a window against the ring around it. A candidate is
+**stated**, i.e. declared real, when it passes a threshold set so that a pair of passes in
+which nothing moved would give about 1 false change per km of track. Every design choice was
+made on the object-free pair ep2 vs ep1 and on synthetic cylinders drawn into it; the method
+was then frozen and tested twice on objects placed on the trail.
 
 **Second session (November 2026): object-free pair in the same session.** Pass A, pass B
 with nothing changed, four objects placed, pass C, within about 15 minutes. Thresholds from
@@ -138,10 +130,11 @@ A vs B, objects looked at once on C vs B:
 | False changes stated | 2 of 6 (12.7 per km) | 1 of 3 (6.3 per km) |
 
 - **Heights:** all four objects are stated, ahead of any false change. The height noise is
-  half that of the first test pair (NMAD of dz in `measure_change.py`: 0.45 cm on A vs B,
-  0.90 cm on ep3 vs ep2). Two false changes are still more than 1 per km allows; one is the
-  canopy of a 3–4 m shrub at the start of the track.
-- **Images:** the backpack and the bucket are stated; the ball and the jacket are not.
+  half that of the first test pair (NMAD of dz: 0.45 cm on A vs B, 0.90 cm on ep3 vs ep2).
+  Two false changes are still more than 1 per km allows; one is the canopy of a 3–4 m shrub
+  at the start of the track.
+- **Images:** the backpack and the bucket are stated. The ball and the jacket are not, and
+  why was not checked.
 - These objects are larger than those of the first session, so the gain cannot be split
   between the same-session null pair and the object size.
 
@@ -159,8 +152,8 @@ ep3 vs ep2:
   than 1 per km: the height noise of the test pair is larger than the object-free pair
   predicted. The cylinder is below that noise.
 - **Images:** nothing is stated, because the object-free pair is noisier than the test pair
-  and its threshold is too strict here. Sorted by significance, though, the three objects
-  are the first three candidates of the whole track: a looser threshold would state all
+  and its threshold is too strict here. Ranked by significance, though, the three objects
+  are the top three candidates of the whole track, so a looser threshold would state all
   three before any false change.
 
 Details: [docs/CHANGE_DETECTION.md](docs/CHANGE_DETECTION.md).

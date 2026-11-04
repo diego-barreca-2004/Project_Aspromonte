@@ -20,43 +20,37 @@
 
   <text x="16" y="24" class="lbl">SHARED FRONT-END (one run per pass)</text>
 
-  <rect x="16" y="36" width="140" height="92" rx="8" class="box"/>
-  <text x="86" y="58" text-anchor="middle" class="ttl">GoPro HERO13</text>
-  <text x="86" y="76" text-anchor="middle" class="sub">5.3K 8:7 Wide, handheld</text>
-  <text x="86" y="92" text-anchor="middle" class="sub">video + telemetry</text>
-  <text x="86" y="116" text-anchor="middle" class="scr">calibrate_camera.py</text>
+  <rect x="16" y="36" width="190" height="92" rx="8" class="box"/>
+  <text x="111" y="58" text-anchor="middle" class="ttl">GoPro HERO13</text>
+  <text x="111" y="76" text-anchor="middle" class="sub">5.3K 8:7 Wide, handheld</text>
+  <text x="111" y="92" text-anchor="middle" class="sub">video + telemetry</text>
+  <text x="111" y="116" text-anchor="middle" class="scr">calibrate_camera.py</text>
 
-  <rect x="176" y="36" width="160" height="92" rx="8" class="box"/>
-  <text x="256" y="58" text-anchor="middle" class="ttl">Ingest</text>
-  <text x="256" y="76" text-anchor="middle" class="sub">frames every 0.2 s</text>
-  <text x="256" y="92" text-anchor="middle" class="sub">GPS + gravity per frame</text>
-  <text x="256" y="116" text-anchor="middle" class="scr">ingest_gopro.py</text>
+  <rect x="226" y="36" width="210" height="92" rx="8" class="box"/>
+  <text x="331" y="58" text-anchor="middle" class="ttl">Ingest</text>
+  <text x="331" y="76" text-anchor="middle" class="sub">frames every 0.2 s</text>
+  <text x="331" y="92" text-anchor="middle" class="sub">GPS + gravity per frame</text>
+  <text x="331" y="116" text-anchor="middle" class="scr">ingest_gopro.py</text>
 
-  <rect x="356" y="36" width="220" height="92" rx="8" class="new"/>
-  <text x="466" y="58" text-anchor="middle" class="ttl">Structure-from-Motion</text>
-  <text x="466" y="76" text-anchor="middle" class="sub">COLMAP incremental, or</text>
-  <text x="466" y="92" text-anchor="middle" class="sub">global (GLOMAP) with gravity priors</text>
-  <text x="466" y="116" text-anchor="middle" class="scr">run_colmap.py / compare_mappers.py</text>
+  <rect x="456" y="36" width="280" height="92" rx="8" class="new"/>
+  <text x="596" y="58" text-anchor="middle" class="ttl">Structure-from-Motion</text>
+  <text x="596" y="76" text-anchor="middle" class="sub">COLMAP incremental, or</text>
+  <text x="596" y="92" text-anchor="middle" class="sub">global (GLOMAP) with gravity priors</text>
+  <text x="596" y="116" text-anchor="middle" class="scr">run_colmap.py / compare_mappers.py</text>
 
-  <rect x="596" y="36" width="200" height="92" rx="8" class="new"/>
-  <text x="696" y="58" text-anchor="middle" class="ttl">Georeferencing</text>
-  <text x="696" y="76" text-anchor="middle" class="sub">GPS Sim3, or gravity-levelled</text>
-  <text x="696" y="92" text-anchor="middle" class="sub">4-DoF fit (heading, scale, t)</text>
-  <text x="696" y="116" text-anchor="middle" class="scr">geo_align.py</text>
+  <rect x="756" y="36" width="268" height="92" rx="8" class="new"/>
+  <text x="890" y="58" text-anchor="middle" class="ttl">Georeferencing</text>
+  <text x="890" y="76" text-anchor="middle" class="sub">GPS Sim3, or gravity-levelled</text>
+  <text x="890" y="92" text-anchor="middle" class="sub">4-DoF fit (heading, scale, t)</text>
+  <text x="890" y="116" text-anchor="middle" class="scr">geo_align.py / compare_mappers.py</text>
 
-  <rect x="816" y="36" width="208" height="92" rx="8" class="box"/>
-  <text x="920" y="58" text-anchor="middle" class="ttl">ICP to LiDAR DTM</text>
-  <text x="920" y="76" text-anchor="middle" class="sub">open 1 m DTM, UTM 33N</text>
-  <text x="920" y="92" text-anchor="middle" class="sub">ground points only</text>
-  <text x="920" y="116" text-anchor="middle" class="scr">georef_splat.py</text>
 
-  <path d="M156,82 L174,82" class="ln"/>
-  <path d="M336,82 L354,82" class="ln"/>
-  <path d="M576,82 L594,82" class="ln"/>
-  <path d="M796,82 L814,82" class="ln"/>
-
-  <path d="M256,128 L256,156 L105,156 L105,188" class="ln"/>
-  <path d="M466,128 L466,156 L726,156 L726,188" class="ln"/>
+  <path d="M206,82 L224,82" class="ln"/>
+  <path d="M436,82 L454,82" class="ln"/>
+  <path d="M736,82 L754,82" class="ln"/>
+  
+  <path d="M331,128 L331,156 L105,156 L105,188" class="ln"/>
+  <path d="M596,128 L596,156 L726,156 L726,188" class="ln"/>
 
   <text x="118" y="182" class="lbl">TRACK 2: CHANGE BETWEEN PASSES</text>
   <rect x="16" y="190" width="178" height="88" rx="8" class="t2"/>
@@ -98,8 +92,8 @@
   <text x="726" y="268" text-anchor="middle" class="scr">train.py (external)</text>
   <rect x="840" y="190" width="184" height="88" rx="8" class="t1"/>
   <text x="932" y="212" text-anchor="middle" class="ttl">Georeferenced splat</text>
-  <text x="932" y="232" text-anchor="middle" class="sub">UTM splat + local view.ply,</text>
-  <text x="932" y="247" text-anchor="middle" class="sub">fitted onto the DTM</text>
+  <text x="932" y="232" text-anchor="middle" class="sub">Sim3, then ICP of the ground</text>
+  <text x="932" y="247" text-anchor="middle" class="sub">onto the 1 m LiDAR DTM</text>
   <text x="932" y="268" text-anchor="middle" class="scr">georef_splat.py</text>
   <path d="M818,234 L838,234" class="ln"/>
 
@@ -107,5 +101,6 @@
   <text x="656" y="323" class="sub">stages compared in this repository: incremental vs global SfM,</text>
   <text x="656" y="339" class="sub">GPS-only vs gravity-levelled georeferencing (compare_mappers.py)</text>
   <rect x="634" y="352" width="14" height="14" rx="3" class="nul"/>
-  <text x="656" y="363" class="sub">set once, on the object-free pair, and frozen for the test pair</text>
+  <text x="656" y="363" class="sub">fitted once per session, on its object-free pair,</text>
+  <text x="656" y="379" class="sub">then frozen for its test pair</text>
 </svg>
