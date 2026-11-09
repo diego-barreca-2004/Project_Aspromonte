@@ -15,7 +15,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
 
 def main() -> None:
@@ -55,8 +54,9 @@ def main() -> None:
         cv2.imwrite(str(images_dir / name), undistorted, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
     fx, fy, cx, cy = K_new[0, 0], K_new[1, 1], K_new[0, 2], K_new[1, 2]
-    intrinsics = {1: {"params": [float(fx), float(fy), float(cx), float(cy)], "images": "all"}}
-    (args.out / "intrinsics.yaml").write_text(yaml.safe_dump(intrinsics, sort_keys=False))
+    # The YAML VidMap reads (camera id 1, all images); this one file does not need PyYAML.
+    params = "".join(f"  - {float(v)!r}\n" for v in (fx, fy, cx, cy))
+    (args.out / "intrinsics.yaml").write_text(f"1:\n  params:\n{params}  images: all\n")
     hfov = np.degrees(2 * np.arctan(max(cx, w - cx) / fx))
     print(f"{len(names)} frames {w}x{h}, fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}, horizontal FOV about {hfov:.0f} deg")
 

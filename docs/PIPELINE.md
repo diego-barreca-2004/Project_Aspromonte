@@ -25,7 +25,7 @@ detection (Track 2, [CHANGE_DETECTION.md](CHANGE_DETECTION.md)).
 | `image_change.py` | Change detection | Change measured in the frames: the reference pass warped into each new view, same a-contrario test. |
 | `cd_eval.py` | Change detection | False changes per km, object ranks and FROC of a run, against placed objects, synthetic objects and excluded zones. |
 | `run_pipeline.py`, `pipeline.conf` | Orchestration | One command per epoch, with QC gates and a shared reconstruction contract. |
-| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py`, `measure_change.py`, `image_change.py`, `cd_eval.py`, `coalign.py`, `run_pipeline.py`, `run_colmap.py`, `scripts/object_ground_truth.py`, `scripts/synthetic_objects.py` and the gravity-levelled georeferencing. |
+| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py`, `measure_change.py`, `image_change.py`, `cd_eval.py`, `coalign.py`, `run_pipeline.py`, `run_colmap.py`, `undistort_pinhole.py`, `scripts/object_ground_truth.py`, `scripts/synthetic_objects.py` and the gravity-levelled georeferencing. |
 | `scripts/` | Reports and figures | `mapper_report.py` and `bend_check.py` aggregate the SfM comparison; `change_map_figure.py` and `render_cloud_gif.py` draw the README figures; `object_ground_truth.py` measures the placed objects in the frames, `synthetic_objects.py` inserts synthetic objects to measure recall, `d0_candidates.py` explains the DSM candidates. |
 
 COLMAP and the Inria 3DGS code are not vendored; they are installed separately
