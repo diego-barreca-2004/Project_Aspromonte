@@ -17,9 +17,11 @@ Heights cycle through --heights; footprint areas are log-uniform in --area. A do
 than its base radius becomes a cylinder.
 
 Then the detector runs on (ref, modified cmp) and cd_eval.py scores its candidates against
-the inserted objects; candidates already found without insertions (run_null/, made once)
-never count as detections. With --runs N this repeats with seeds 0..N-1 and writes the recall by
-height and area to <out>/recall.csv.
+the inserted objects; candidates already found without insertions (run_null/, reused while
+its detector arguments stay the same, recorded in run_null/detector_args.json) never count as
+detections. A --trim-ends in --detector-args also applies to the track length that cd_eval.py
+uses for false alarms per km. With --runs N this repeats with seeds 0..N-1 and writes the recall
+by height and area to <out>/recall.csv.
 
   python3 scripts/synthetic_objects.py --ref seg01/colmap/dense/fused_utm.ply \\
       --cmp-seg seg01_ep2 --icp change_detection/icp_ep2_to_ep1.txt \\
@@ -216,10 +218,18 @@ def main():
 
     null_dir = os.path.join(args.out, "run_null")
     null_csv = os.path.join(null_dir, "dsm_detections.csv")
-    if not os.path.isfile(null_csv):
-        dsm_change.main(["--ref", args.ref, "--cmp", cmp_ply, "--icp", args.icp,
-                         "--cc-shift", *args.cc_shift, "--track", args.track,
-                         "--out", null_dir] + args.detector_args.split())
+    null_tag = os.path.join(null_dir, "detector_args.json")
+    null_argv = ["--ref", args.ref, "--cmp", cmp_ply, "--icp", args.icp,
+                 "--cc-shift", *args.cc_shift, "--track", args.track,
+                 "--out", null_dir] + args.detector_args.split()
+    if not (os.path.isfile(null_csv) and os.path.isfile(null_tag)
+            and json.load(open(null_tag)) == null_argv):
+        shutil.rmtree(null_dir, ignore_errors=True)
+        dsm_change.main(null_argv)
+        json.dump(null_argv, open(null_tag, "w"), indent=1)
+    trim = argparse.ArgumentParser(add_help=False)
+    trim.add_argument("--trim-ends", default="0")
+    trim_ends = trim.parse_known_args(args.detector_args.split())[0].trim_ends
     results = []
     for seed in range(args.first_seed, args.first_seed + args.runs):
         run = os.path.join(args.out, f"run_{seed:03d}")
@@ -235,7 +245,7 @@ def main():
         ev = ["--candidates", os.path.join(run, "dsm_detections.csv"), "--track", args.track,
               "--synthetic", os.path.join(run, "synthetic.json"), "--icp", args.icp,
               "--cc-shift", *args.cc_shift, "--label", f"seed {seed}",
-              "--null-candidates", null_csv,
+              "--null-candidates", null_csv, "--trim-ends", trim_ends,
               "--out", os.path.join(run, "eval.json")]
         for e, n, r in args.exclude:
             ev += ["--exclude", str(e), str(n), str(r)]

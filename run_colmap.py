@@ -18,6 +18,9 @@ Devices: feature extraction runs on the GPU by default, matching on the CPU. COL
 matcher (SiftGPU) is often slower than CPU on recent GPUs and under WSL; override per stage with
 --extraction-gpu / --matching-gpu, or both at once with --use-gpu.
 
+A re-run into the same --out starts over: database.db and sparse/ are removed first, because
+COLMAP keeps the camera of a database it finds and the largest model could be an old one.
+
 Usage:
   python3 run_colmap.py --images ./seg01/frames --out ./seg01/colmap \
                         --calibration ./calib_out/calibration_fisheye.json
@@ -153,7 +156,11 @@ def main():
     db = os.path.join(args.out, "database.db")
     sparse = os.path.join(args.out, "sparse")
     undist = os.path.join(args.out, "undistorted")
-    os.makedirs(sparse, exist_ok=True)
+    for path in (db, db + "-shm", db + "-wal"):
+        if os.path.exists(path):
+            os.remove(path)
+    shutil.rmtree(sparse, ignore_errors=True)
+    os.makedirs(sparse)
 
     # Resolve camera model and, if a calibration is given, the injected intrinsics.
     camera_model, camera_params = args.camera_model, None

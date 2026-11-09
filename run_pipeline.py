@@ -28,7 +28,11 @@ QC gates (halt on failure):
   georef -> UTM centroid inside the configured box AND vertical extent <= max_vertical_extent
             (catches floater-inflated clouds and gross mislocation)
 
-Each stage skips when its output already exists (resume); force re-run with --force.
+Each stage skips when its output already exists (resume); force re-run with --force. An output
+older than one of its inputs is redone without --force: geo_transform.txt after the SfM model,
+fused.ply after the SfM model, fused_utm.ply after fused.ply or geo_transform.txt. A dense redone
+this way or with --force starts from an empty workspace, so its cloud is in the current model's
+frame; a dense cut short with the model unchanged resumes in its workspace.
 Run a sub-range with --from/--to. Preview without executing with --dry-run.
 
 Usage:
@@ -38,6 +42,7 @@ Usage:
 import argparse
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -165,6 +170,12 @@ def done(path):
     return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
+def stale(output, *inputs):
+    """True when output exists and one of its inputs was written after it."""
+    return os.path.isfile(output) and any(
+        os.path.isfile(i) and os.path.getmtime(i) > os.path.getmtime(output) for i in inputs)
+
+
 # --- command runner ----------------------------------------------------------
 def run(cmd, capture=False):
     print("  $ " + " ".join(str(c) for c in cmd))
@@ -194,6 +205,7 @@ class P:
         self.geo = os.path.join(self.colmap, "geo_transform.txt")
         self.dense = os.path.join(self.colmap, "dense")
         self.pm_cfg = os.path.join(self.dense, "stereo", "patch-match.cfg")
+        self.dense_model = os.path.join(self.dense, "sparse", "images.bin")
         self.fused = os.path.join(self.dense, "fused.ply")
         self.fused_utm = os.path.join(self.dense, "fused_utm.ply")
         self.gs_out = os.path.join(wd, "gs_output")
@@ -269,7 +281,7 @@ def stage_sfm(cfg, p, args):
 def stage_geo(cfg, p, args):
     if not done(os.path.join(p.model0, "images.bin")):
         sys.exit("geo needs the SfM model; run --from sfm.")
-    if done(p.geo) and not args.force:
+    if done(p.geo) and not args.force and not stale(p.geo, os.path.join(p.model0, "images.bin")):
         print("  skip geo (geo_transform.txt exists)")
     else:
         run([cfg["python"], cfg["geo_script"], "--gps", p.gps, "--images", p.undist_images,
@@ -292,10 +304,23 @@ def stage_geo(cfg, p, args):
     print(f"  gate geo OK: {ninl}/{ntot} inliers (ratio {ratio:.2f}), residual {resid:.3f} m.")
 
 
+def clear_dense(p):
+    """Remove what a dense run built from an SfM model: workspace, depth maps and clouds."""
+    for d in ("stereo", "sparse", "images"):
+        shutil.rmtree(os.path.join(p.dense, d), ignore_errors=True)
+    for path in (p.fused, p.fused + ".vis", p.fused_utm):
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def stage_dense(cfg, p, args):
-    if not done(os.path.join(p.model0, "images.bin")):
+    model = os.path.join(p.model0, "images.bin")
+    if not done(model):
         sys.exit("dense needs the undistorted workspace; run --from sfm.")
-    if done(p.fused) and not args.force:
+    if args.force or stale(p.dense_model, model) or stale(p.fused, model):
+        print("  clearing the dense workspace (--force, or SfM model newer than it)")
+        clear_dense(p)
+    if done(p.fused):
         print("  skip dense (fused.ply exists)")
     else:
         # (a) build the stereo workspace (identity undistort on the already-pinhole model)
@@ -326,7 +351,7 @@ def stage_georef(cfg, p, args):
     if not done(p.geo):
         sys.exit("georef needs geo_transform.txt; run --from geo.")
     out = ""
-    if done(p.fused_utm) and not args.force:
+    if done(p.fused_utm) and not args.force and not stale(p.fused_utm, p.fused, p.geo):
         print("  skip georef (fused_utm.ply exists)")
         return
     out = run([cfg["python"], cfg["cloud_script"], p.fused, p.geo, p.fused_utm,

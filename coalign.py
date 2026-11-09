@@ -26,7 +26,12 @@ Steps:
      --cmp-seg <out>/passes/<b>). Another --max-image-size goes with another --passes-dir
      (e.g. passes_1600px): the steps up to 6 are shared, the clouds of each size kept apart.
 
-Each step writes a marker in <out>/ and is skipped on a re-run; delete the marker to redo it.
+Steps 2, 3-4, 5 and 6 each write a marker in <out>/ (.done_extract, .done_match, .done_map,
+.done_georef) and are skipped on a re-run; delete a marker to redo that step. A step without its
+marker, deleted or cut short by a crash, starts over: it first removes its own old output and all
+that was built on it, in every --passes-dir (later markers, sparse models, Sim3, per-pass splits
+and clouds). Redoing georef keeps the splits and fused.ply, and removes only the Sim3 and
+fused_utm.ply. A dense cut short resumes in its workspace.
 The source frames are only linked, never modified.
 
 Usage:
@@ -49,6 +54,7 @@ from run_colmap import camera_params_from_calibration, largest_model, run
 
 IMG_EXT = (".jpg", ".jpeg", ".png")
 PAIR_ID_BASE = 2147483647                                  # COLMAP's pair_id encoding
+STEPS = ("extract", "match", "map", "georef")              # the steps with a marker, in order
 
 
 def pass_frames(seg_dir):
@@ -203,6 +209,39 @@ def report(db, sparse, labels):
     return lines
 
 
+def prepare_redo(out, step):
+    """Before running a step: remove its old output and all that was built on it."""
+    for later in STEPS[STEPS.index(step) + 1:]:
+        marker = os.path.join(out, f".done_{later}")
+        if os.path.exists(marker):
+            os.remove(marker)
+    db = os.path.join(out, "database.db")
+    if step == "extract":                                  # feature_extractor keeps a database's camera
+        for path in (db, db + "-shm", db + "-wal"):
+            if os.path.exists(path):
+                os.remove(path)
+    elif step == "match" and os.path.exists(db):           # matches_importer skips matched pairs
+        con = sqlite3.connect(db)
+        con.execute("DELETE FROM matches")
+        con.execute("DELETE FROM two_view_geometries")
+        con.commit()
+        con.close()
+    pass_colmaps = [os.path.join(out, d, label, "colmap") for d in os.listdir(out)
+                    if os.path.isdir(os.path.join(out, d)) for label in os.listdir(os.path.join(out, d))
+                    if os.path.isdir(os.path.join(out, d, label, "colmap"))]
+    if step != "georef":                                   # the model changes
+        sparse = os.path.join(out, "sparse")
+        shutil.rmtree(sparse, ignore_errors=True)
+        os.makedirs(sparse)
+        for cm in pass_colmaps:
+            shutil.rmtree(cm)
+    for path in [os.path.join(out, "geo_transform.txt")] + [
+            os.path.join(cm, *rel) for cm in pass_colmaps
+            for rel in (("geo_transform.txt",), ("dense", "fused_utm.ply"))]:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pass", dest="passes", action="append", required=True, metavar="LABEL=SEG_DIR",
@@ -248,6 +287,7 @@ def main():
         print(f"  pass {label}: {len(names)} frames from {frames}")
 
     if not os.path.exists(done("extract")):
+        prepare_redo(out, "extract")
         model, params = camera_params_from_calibration(args.calibration, first_frames)
         run([args.colmap, "feature_extractor", "--database_path", db, "--image_path", images,
              "--ImageReader.single_camera_per_folder", "1",
@@ -256,6 +296,7 @@ def main():
         open(done("extract"), "w").close()
 
     if not os.path.exists(done("match")):
+        prepare_redo(out, "match")
         pairs, n_seq, n_cross = build_pairs(passes, args.overlap, args.radius)
         print(f"  pairs: {n_seq} within passes + {n_cross} across passes (GPS radius {args.radius:g} m)")
         pair_file = os.path.join(out, "pairs.txt")
@@ -266,6 +307,7 @@ def main():
         open(done("match"), "w").close()
 
     if not os.path.exists(done("map")):
+        prepare_redo(out, "map")
         run([args.colmap, "mapper", "--database_path", db, "--image_path", images,
              "--output_path", sparse])
         open(done("map"), "w").close()
@@ -277,6 +319,7 @@ def main():
 
     geo = os.path.join(out, "geo_transform.txt")
     if not os.path.exists(done("georef")):
+        prepare_redo(out, "georef")
         print("  " + georeference(model, segs, args.epsg, geo))
         open(done("georef"), "w").close()
     lines.append(open(geo).readlines()[1].strip("# \n"))
@@ -290,11 +333,15 @@ def main():
         for name in ("frames", "gps.csv"):
             if not os.path.lexists(os.path.join(pdir, name)):
                 os.symlink(os.path.join(seg, name), os.path.join(pdir, name))
-        if not os.path.isdir(sub):
+        if not os.path.isdir(sub):                         # a new split: older clouds do not apply
+            shutil.rmtree(dense, ignore_errors=True)
             split_pass(model, label, sub, args.colmap)
         shutil.copyfile(geo, os.path.join(cm, "geo_transform.txt"))
+        fused_utm = os.path.join(dense, "fused_utm.ply")
         if not os.path.exists(fused):
-            if not os.path.exists(os.path.join(dense, "patch-match.cfg")):
+            if os.path.exists(fused_utm):
+                os.remove(fused_utm)
+            if not os.path.exists(os.path.join(dense, "stereo", "patch-match.cfg")):
                 run([args.colmap, "image_undistorter", "--image_path", os.path.join(seg, "frames"),
                      "--input_path", sub, "--output_path", dense, "--output_type", "COLMAP"])
             run([args.colmap, "patch_match_stereo", "--workspace_path", dense,
@@ -303,7 +350,6 @@ def main():
                  "--PatchMatchStereo.geom_consistency", "true", "--PatchMatchStereo.filter", "true"])
             run([args.colmap, "stereo_fusion", "--workspace_path", dense, "--workspace_format", "COLMAP",
                  "--input_type", "geometric", "--output_path", fused])
-        fused_utm = os.path.join(dense, "fused_utm.ply")
         if not os.path.exists(fused_utm):
             run([sys.executable, os.path.join(here, "georef_cloud.py"), fused,
                  os.path.join(cm, "geo_transform.txt"), fused_utm, "--sor-iters", args.sor_iters,

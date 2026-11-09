@@ -25,7 +25,7 @@ detection (Track 2, [CHANGE_DETECTION.md](CHANGE_DETECTION.md)).
 | `image_change.py` | Change detection | Change measured in the frames: the reference pass warped into each new view, same a-contrario test. |
 | `cd_eval.py` | Change detection | False changes per km, object ranks and FROC of a run, against placed objects, synthetic objects and excluded zones. |
 | `run_pipeline.py`, `pipeline.conf` | Orchestration | One command per epoch, with QC gates and a shared reconstruction contract. |
-| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py`, `measure_change.py`, `image_change.py`, `cd_eval.py`, `coalign.py` and the gravity-levelled georeferencing. |
+| `tests/` | Tests | Synthetic ground-truth tests for `run_m3c2.py`, `dsm_change.py`, `measure_change.py`, `image_change.py`, `cd_eval.py`, `coalign.py`, `run_pipeline.py`, `run_colmap.py`, `scripts/object_ground_truth.py`, `scripts/synthetic_objects.py` and the gravity-levelled georeferencing. |
 | `scripts/` | Reports and figures | `mapper_report.py` and `bend_check.py` aggregate the SfM comparison; `change_map_figure.py` and `render_cloud_gif.py` draw the README figures; `object_ground_truth.py` measures the placed objects in the frames, `synthetic_objects.py` inserts synthetic objects to measure recall, `d0_candidates.py` explains the DSM candidates. |
 
 COLMAP and the Inria 3DGS code are not vendored; they are installed separately
@@ -117,6 +117,8 @@ python3 run_pipeline.py --config pipeline.conf --video seg01.mp4 --workdir seg01
 QC gates stop the run with a message at the points that have failed silently before: wrong
 ingest resolution, thin SfM registration, a weak GPS fit, the Blackwell zero-fused-points
 bug, a mislocated georeferencing. Each stage is skipped if its output exists; `--force`
-re-runs it, `--from`/`--to` restrict the range, `--dry-run` prints the commands.
+re-runs it, `--from`/`--to` restrict the range, `--dry-run` prints the commands. Geo, dense and
+georef are also redone when an input is newer than their output, and a dense redone this way or
+with `--force` starts from an empty workspace.
 `splat=true` in `pipeline.conf` adds 3DGS training; otherwise the run stops at the
 georeferenced dense cloud (Track 2).

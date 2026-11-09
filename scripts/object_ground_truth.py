@@ -133,7 +133,7 @@ def measure(seg, model, cams, imgs, sim, label, kind, start, guess, n_frames, st
             shape="cylinder", debug=None):
     frames = sorted(os.listdir(os.path.join(seg, "frames")))
     obs = []
-    for i in range(start, start - n_frames * step, -step):
+    for i in range(start, max(start - n_frames * step, -1), -step):   # stops at frame 0, no wrap
         name = frames[i]
         if name not in imgs:
             continue
